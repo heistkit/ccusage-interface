@@ -25,28 +25,61 @@ node ccstats.mjs --serve   # live dashboard on http://127.0.0.1:8743
   stat card. Right-click the background for the whole-range summary.
 - English / 한국어, light / dark, and a few easter eggs.
 
-## Download
+## Install
 
-Grab it from [**Releases**](https://github.com/heistkit/ccusage-interface/releases):
+Pick whichever is least effort. Everything needs **Node 18+** and nothing else.
 
-| | |
-|---|---|
-| `ccstats.mjs` | the whole tool, one file, fonts already inlined |
-| `ccstats-<version>.zip` | same file plus double-click launchers for Windows and macOS |
+**Run it without installing anything**
 
 ```bash
+npx github:heistkit/ccusage-interface --serve --open
+```
+
+```bash
+bunx github:heistkit/ccusage-interface --serve --open
+```
+
+**Download one file**
+
+```bash
+curl -fsSLO https://github.com/heistkit/ccusage-interface/releases/latest/download/ccstats.mjs
 node ccstats.mjs --serve --open
 ```
 
-From the zip, double-click `ccstats.cmd` (Windows) or `ccstats.command` (macOS) instead.
+**Double-click, no terminal** — grab `ccstats-<version>.zip` from
+[Releases](https://github.com/heistkit/ccusage-interface/releases), then double-click
+`ccstats.cmd` (Windows) or `ccstats.command` (macOS). Both also work as normal CLIs if you pass
+arguments.
 
-Cloning the repo works too, but then `geist-fonts.css` has to sit beside `ccstats.mjs` — the
-release build bakes it in, the repo build reads it off disk and falls back to system fonts
-without it.
+**Scoop** (Windows) — installs straight from the release, no bucket to add:
+
+```powershell
+scoop install https://github.com/heistkit/ccusage-interface/releases/latest/download/ccstats.json
+```
+
+**Homebrew** — every release ships a `ccstats.rb` formula with that release's checksum. Drop it
+into a tap repo as `Formula/ccstats.rb` and `brew install <yourtap>/ccstats`.
+
+**npm** — once the package is published:
+
+```bash
+npm install -g ccusage-interface   # then: ccstats --serve --open
+```
+
+**From source**
+
+```bash
+git clone https://github.com/heistkit/ccusage-interface
+cd ccusage-interface && node ccstats.mjs --serve --open
+```
+
+Note that from source, `geist-fonts.css` must sit beside `ccstats.mjs`. Release builds inline it;
+the repo build reads it off disk and falls back to system fonts without it.
 
 ## Requirements
 
-Node 18 or newer. That's it. No install, no dependencies, no network access.
+Node 18 or newer. That's it. No install step, no dependencies, no network access — not from the
+tool, and not from the page it generates.
 
 ## Usage
 

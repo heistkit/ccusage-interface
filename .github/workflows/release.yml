@@ -40,33 +40,107 @@ jobs:
           chmod +x pkg/ccstats.command
           cd pkg && zip -qr "../ccstats-${GITHUB_REF_NAME}.zip" .
 
+      # Generated here, not committed, because both formats embed a checksum of the release
+      # archive — which cannot exist until the archive does. Hand-maintained shas go stale
+      # silently and every install then fails verification.
+      - name: Generate package-manager manifests
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME#v}"
+          ZIP="ccstats-${GITHUB_REF_NAME}.zip"
+          SHA=$(sha256sum "$ZIP" | cut -d' ' -f1)
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${ZIP}"
+
+          # Homebrew: drop this in a tap repo named homebrew-<something> as Formula/ccstats.rb
+          cat > ccstats.rb <<EOF
+          class Ccstats < Formula
+            desc "Local usage dashboard for Claude Code"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+            url "${URL}"
+            sha256 "${SHA}"
+            version "${V}"
+            license "MIT"
+
+            depends_on "node"
+
+            def install
+              bin.install "ccstats.mjs" => "ccstats"
+            end
+
+            test do
+              assert_match "ccstats", shell_output("#{bin}/ccstats --help")
+            end
+          end
+          EOF
+
+          # Scoop: installable straight from this URL, no bucket repo required.
+          cat > ccstats.json <<EOF
+          {
+            "version": "${V}",
+            "description": "Local usage dashboard for Claude Code",
+            "homepage": "https://github.com/${GITHUB_REPOSITORY}",
+            "license": "MIT",
+            "depends": "nodejs",
+            "url": "${URL}",
+            "hash": "${SHA}",
+            "bin": [["ccstats.cmd", "ccstats"]],
+            "checkver": "github",
+            "autoupdate": {
+              "url": "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$version/ccstats-v\$version.zip"
+            }
+          }
+          EOF
+
+          echo "sha256($ZIP) = $SHA"
+
       - name: Write the release notes
         run: |
-          cat > NOTES.md <<'EOF'
-          ### Download one of these
+          cat > NOTES.md <<EOF
+          Needs **Node 18+**. No dependencies, no install step, no network requests — from the
+          tool or from the page it generates.
+
+          ### Nothing to install
+
+          \`\`\`bash
+          npx github:${GITHUB_REPOSITORY} --serve --open     # or: bunx github:${GITHUB_REPOSITORY}
+          \`\`\`
+
+          ### Download and run
+
+          \`\`\`bash
+          curl -fsSLO https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/ccstats.mjs
+          node ccstats.mjs --serve --open
+          \`\`\`
+
+          Or grab \`ccstats-${GITHUB_REF_NAME}.zip\` and double-click \`ccstats.cmd\` (Windows) /
+          \`ccstats.command\` (macOS).
+
+          ### Scoop (Windows)
+
+          \`\`\`powershell
+          scoop install https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/ccstats.json
+          \`\`\`
+
+          ### Homebrew
+
+          \`ccstats.rb\` below is a ready formula with this release's checksum — put it in a tap
+          repo as \`Formula/ccstats.rb\`, then \`brew install <tap>/ccstats\`.
+
+          ### Assets
 
           | | |
           |---|---|
-          | **`ccstats.mjs`** | The whole tool, one file. Fonts already inlined. |
-          | **`ccstats-<version>.zip`** | Same file plus double-click launchers for Windows and macOS. |
-
-          ### Run it
-
-          ```bash
-          node ccstats.mjs --serve --open
-          ```
-
-          Or from the zip, double-click `ccstats.cmd` (Windows) / `ccstats.command` (macOS).
-
-          Needs Node 18+. Nothing else — no install, no dependencies, no network requests.
-          Writing a static page instead: `node ccstats.mjs`
+          | \`ccstats.mjs\` | the whole tool, one file, fonts inlined |
+          | \`ccstats-${GITHUB_REF_NAME}.zip\` | same file plus double-click launchers |
+          | \`ccstats.json\` | Scoop manifest |
+          | \`ccstats.rb\` | Homebrew formula |
 
           ### Privacy
 
           Reads usage metadata only from the transcripts Claude Code already writes locally:
           timestamps, model names, token counts, and a truncated session-id hash. Never message
-          content, prompts, file paths, or project names. Verified by the smoke test that gated
-          this build.
+          content, prompts, file paths, or project names. The smoke test that gated this build
+          asserts the session ids come out hashed.
           EOF
 
       - name: Publish
@@ -76,4 +150,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "ccstats $GITHUB_REF_NAME" \
             --notes-file NOTES.md \
-            dist/ccstats.mjs "ccstats-${GITHUB_REF_NAME}.zip"
+            dist/ccstats.mjs "ccstats-${GITHUB_REF_NAME}.zip" ccstats.json ccstats.rb

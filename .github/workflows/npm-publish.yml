@@ -1,0 +1,67 @@
+name: npm publish
+
+# Publishes to npm on tag push, but ONLY if an NPM_TOKEN secret exists. Without it the job is
+# skipped rather than failed, so tagging keeps working for everyone who never sets npm up.
+#
+# To enable:
+#   1. npmjs.com -> Access Tokens -> Generate -> "Automation"
+#   2. this repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+#      Name: NPM_TOKEN
+#   3. push a tag; `npx ccusage-interface` works a minute later
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# id-token is what `npm publish --provenance` signs with; without it the publish step fails
+# even with a valid NPM_TOKEN.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Check for a token
+        id: gate
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "no NPM_TOKEN secret set — skipping publish (this is not a failure)"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # package.json version must match the tag, or npm publishes something nobody asked for.
+      - name: Verify version matches the tag
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          pkg=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$pkg" != "$tag" ]; then
+            echo "package.json is $pkg but the tag is $tag — bump package.json and re-tag"
+            exit 1
+          fi
+          echo "version $pkg matches tag $GITHUB_REF_NAME"
+
+      # prepublishOnly runs the smoke test too; this makes the failure legible before publish.
+      - name: Smoke-test the package as it will ship
+        if: steps.gate.outputs.ready == 'true'
+        run: node tools/smoke.mjs ccstats.mjs
+
+      - name: Publish
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public

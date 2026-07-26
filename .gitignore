@@ -11,11 +11,14 @@ ccstats.config.json
 data.json
 ccstats-data.json
 
-# Release build output (tools/bundle.mjs, and the zip the workflow assembles)
+# Release build output (tools/bundle.mjs, and the artifacts the workflow assembles)
 dist/
 pkg/
 ccstats-v*.zip
 NOTES.md
+ccstats.rb
+ccstats.json
+*.tgz
 
 node_modules/
 .DS_Store

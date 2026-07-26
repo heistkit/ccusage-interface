@@ -1,0 +1,53 @@
+{
+  "name": "ccusage-interface",
+  "version": "1.1.0",
+  "description": "A local usage dashboard for Claude Code. Reads the JSONL transcripts it already writes and generates a single self-contained HTML page. No dependencies, no network.",
+  "type": "module",
+  "bin": {
+    "ccstats": "ccstats.mjs",
+    "ccusage-interface": "ccstats.mjs"
+  },
+  "main": "ccstats.mjs",
+  "exports": {
+    ".": "./ccstats.mjs"
+  },
+  "files": [
+    "ccstats.mjs",
+    "geist-fonts.css",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node ccstats.mjs --serve --open",
+    "build": "node ccstats.mjs",
+    "bundle": "node tools/bundle.mjs",
+    "test": "node tools/smoke.mjs ccstats.mjs",
+    "prepublishOnly": "node tools/smoke.mjs ccstats.mjs"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "ccusage",
+    "usage",
+    "tokens",
+    "cost",
+    "dashboard",
+    "anthropic",
+    "cli"
+  ],
+  "author": "heistkit",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/heistkit/ccusage-interface.git"
+  },
+  "bugs": {
+    "url": "https://github.com/heistkit/ccusage-interface/issues"
+  },
+  "homepage": "https://github.com/heistkit/ccusage-interface#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "preferGlobal": true
+}

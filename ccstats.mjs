@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // ccstats — a local usage dashboard for Claude Code.
 //
 // Reads the JSONL transcripts Claude Code already writes on this machine (the same files
@@ -1650,9 +1651,15 @@ const MODEL_NAMES = [
 ];
 // Fall back to a tidied-up raw id rather than the full "claude-foo-9-20991231" string, so a
 // model this build has never heard of still reads like a name in the UI.
+//
+// This is the ONE display string that comes from the transcript rather than from a literal in
+// this file or the user's own config, and model names are interpolated into innerHTML in half a
+// dozen places. The page allows inline script (it has to — it is one file), so an id carrying
+// markup would execute. Escaping here covers every call site at once.
 function prettyFallback(m) {
   const s = String(m).replace(/^claude-/, "").replace(/-\d{8}$/, "").replace(/[-_]/g, " ");
-  return s.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+  return s.replace(/\b[a-z]/g, (c) => c.toUpperCase())
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 const pretty = (m) => {
   const hit = MODEL_NAMES.find(([re]) => re.test(m));
@@ -1799,10 +1806,12 @@ function shiftDay(k, n) {
   const d = new Date(k + "T00:00:00"); d.setDate(d.getDate() + n);
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
-const todayKey = () => shiftDay(new Date().toISOString().slice(0, 10), 0) && (() => {
+// Local date, not UTC — the day keys are built from local time in buildData, so a UTC-derived
+// "today" would point at the wrong bucket for anyone east or west of Greenwich after 00:00.
+const todayKey = () => {
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-})();
+};
 
 // If a model isn't in the pricing table its cost is a mid-range guess. Saying so is the
 // difference between an estimate and a number that just looks authoritative.
@@ -1832,6 +1841,10 @@ function render() {
   // renderNoData() replaces the whole shell, so once we are in that state there is nothing left
   // for a normal render to write into — see pollLive, which reloads instead of re-rendering.
   if (!dayKeys.length) { noDataMode = true; return renderNoData(); }
+  // Cleared every render, then refilled by rates() during aggregate() below. Left to accumulate,
+  // a model priced once stayed in the warning forever — including after switching to a range
+  // that doesn't contain it, which named a model the visible numbers no longer depend on.
+  unpriced.clear();
   const keys = keysInRange();
   const a = aggregate(keys);
   const st = streaks(keys);
@@ -2407,7 +2420,9 @@ function renderIRL() {
 document.getElementById("irl").addEventListener("mouseenter", renderIRL);
 // the whole panel is the reroll target — the button is just the affordance that says so
 document.getElementById("irl").addEventListener("click", (e) => {
-  e.stopPropagation();
+  // No stopPropagation: the ripple runs on pointerdown so there was nothing here to suppress,
+  // and swallowing the click meant the document-level handler never ran — so an open
+  // right-click menu stayed open behind the panel.
   const btn = e.target.closest(".irl-roll");
   renderIRL();
   if (btn) {
@@ -2660,7 +2675,10 @@ function copyContext(el) {
     }
     const scope = todayModel ? T("copyScopeToday") : T("copyLabel", range);
     return { label: pretty(m), text: T("copyModel", pretty(m), scope, fmtUsdCents(mCost(m, v)),
-      fmt(mTok(v)), fmt(v.i), fmt(v.o), fmt(v.cw), fmt(v.cr), v.msg.toLocaleString()) };
+      // v.cw is 5-minute writes only; the 1-hour tier is a separate field. Reporting the bare
+      // v.cw here left the four components short of the total they sit next to — on real data
+      // that was 16.5M tokens of 1h cache writes silently dropped out of the copied text.
+      fmt(mTok(v)), fmt(v.i), fmt(v.o), fmt(v.cw + v.c1h), fmt(v.cr), v.msg.toLocaleString()) };
   }
 
   const cardEl = at("[data-card]");
@@ -2867,10 +2885,27 @@ const CONFIG_TEMPLATE = {
 function parseArgs(argv) {
   const a = { roots: [], serve: false, port: 0, out: "", open: false, lan: false, config: "", help: false, init: false };
   for (let i = 0; i < argv.length; i++) {
-    const v = argv[i], next = () => argv[++i];
+    const v = argv[i];
+    // A value-taking flag left dangling used to reach resolve(undefined) and print a raw Node
+    // stack trace. Every one of them goes through here so the message is about the flag.
+    const next = () => {
+      const n = argv[++i];
+      if (n === undefined || n.startsWith("-")) {
+        console.error("ccstats: " + v + " needs a value.\nTry: node ccstats.mjs --help");
+        process.exit(1);
+      }
+      return n;
+    };
     if (v === "-h" || v === "--help") a.help = true;
     else if (v === "-s" || v === "--serve") a.serve = true;
-    else if (v === "-p" || v === "--port") a.port = Number(next());
+    else if (v === "-p" || v === "--port") {
+      const n = Number(next());
+      if (!Number.isInteger(n) || n < 1 || n > 65535) {
+        console.error("ccstats: --port must be a whole number between 1 and 65535.");
+        process.exit(1);
+      }
+      a.port = n;
+    }
     else if (v === "-o" || v === "--out") a.out = next();
     else if (v === "--open") a.open = true;
     else if (v === "--lan") a.lan = true;
@@ -2878,7 +2913,11 @@ function parseArgs(argv) {
     else if (v === "--config") a.config = next();
     else if (v === "--init-config") a.init = true;
     else if (v.startsWith("-")) { console.error("ccstats: unknown option " + v + "\n"); a.help = true; }
+    else { console.error("ccstats: unexpected argument " + JSON.stringify(v) + "\n"); a.help = true; }
   }
+  // flags that quietly do nothing in the mode they were given in are worth a word
+  if (a.serve && a.out) console.error("ccstats: --out is ignored with --serve.");
+  if (!a.serve && a.lan) console.error("ccstats: --lan only applies to --serve.");
   return a;
 }
 
