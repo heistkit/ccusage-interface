@@ -590,6 +590,26 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+  /* --- redacted mode: for screenshots, screen sharing, and sitting in a cafe ---
+     Blurs the figures and leaves the labels, chrome and heatmap shape alone, so the page still
+     looks like itself. filter does not affect layout, so nothing reflows on toggle.
+     user-select is off too: a blurred number you can still select and copy is not hidden.
+     The heatmap and daily chart deliberately stay — they carry no readable number, and they are
+     what makes a shared screenshot worth looking at. Say so rather than implying total cover. */
+  body.redacted :is(
+    .coststrip .cval, .coststrip .cbreak,
+    #cards .card .value,
+    .today .tstats b, .today .tsplit em b, .today .tsec i,
+    .today .tmtok, .today .tmcost,
+    .today .tcmpa, .today .tcmpb, .today .tcmpd,
+    .wcard .wbalance, .wcard .mcost2, .wcard .block b, .wcard .block .pct,
+    .dval, .dpct, .dcenter b,
+    .mrow .mmeta,
+    #liveCost, #liveCount, #liveMeta,
+    .foot, .irl-panel
+  ) {
+    filter: blur(6px); user-select: none; -webkit-user-select: none;
+  }
   /* --- first-launch hello --- */
   .hello {
     position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
@@ -604,6 +624,9 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     animation: rise .45s cubic-bezier(.22,1,.36,1) backwards .05s;
   }
   .hello-head { display: flex; gap: 14px; align-items: flex-start; }
+  .hello-heading { flex: 1; min-width: 0; }
+  .hello-langs { flex-shrink: 0; margin: -2px -4px 0 0; background: var(--chip); }
+  .hello-langs button { font-size: 13px; padding: 4px 9px; }
   .hello-mark {
     flex-shrink: 0; width: 44px; height: 44px; border-radius: 13px; background: var(--chip);
     display: grid; place-items: center; color: var(--accent);
@@ -628,7 +651,25 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   }
   .hello-privacy b { color: var(--text); }
   .hello-foot { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 20px; }
+  .hello-foot-l { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .hello-hint { color: var(--muted); font-size: 13px; }
+  .hello-again {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    font-size: 13.5px; font-weight: 600; color: var(--text); user-select: none;
+  }
+  .hello-again input {
+    appearance: none; -webkit-appearance: none; margin: 0; flex-shrink: 0;
+    width: 17px; height: 17px; border: 2px solid var(--muted); border-radius: 5px;
+    background: none; cursor: pointer; position: relative;
+    transition: background-color .16s ease, border-color .16s ease;
+  }
+  .hello-again input:checked { background: var(--accent); border-color: var(--accent); }
+  /* drawn with borders rather than a glyph so it needs no font and inherits no metrics */
+  .hello-again input:checked::after {
+    content: ""; position: absolute; left: 4px; top: 0.5px; width: 4px; height: 9px;
+    border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg);
+  }
+  .hello-again input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .hello-go {
     font: inherit; font-size: 15px; font-weight: 650; cursor: pointer;
     background: var(--accent); color: var(--on-accent); border: 0;
@@ -1260,15 +1301,28 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   <div class="hello-card" role="dialog" aria-modal="true" aria-labelledby="helloTitle">
     <div class="hello-head">
       <div class="hello-mark" id="helloMark"></div>
-      <div>
+      <div class="hello-heading">
         <h2 id="helloTitle" data-i18n="helloTitle">Hey — this is ccstats.</h2>
         <p class="hello-sub" data-i18n="helloSub"></p>
+      </div>
+      <!-- Language belongs here, not only in the top bar: this dialog is the first thing anyone
+           sees, and it is the one screen you cannot read your way out of if it opened in the
+           wrong language. Same [data-lang] hook as the top bar, so one handler drives both. -->
+      <div class="ranges langs hello-langs">
+        <button data-lang="en">EN</button>
+        <button data-lang="ko">한</button>
       </div>
     </div>
     <ul class="hello-list" id="helloList"></ul>
     <div class="hello-privacy" id="helloPrivacy"></div>
     <div class="hello-foot">
-      <span class="hello-hint" data-i18n="helloHint"></span>
+      <div class="hello-foot-l">
+        <label class="hello-again">
+          <input type="checkbox" id="helloAgain" checked>
+          <span data-i18n="helloDontShow"></span>
+        </label>
+        <span class="hello-hint" data-i18n="helloHint"></span>
+      </div>
       <button type="button" class="hello-go" id="helloGo" data-i18n="helloGo">Let's go</button>
     </div>
   </div>
@@ -1471,6 +1525,8 @@ const LANGS = {
     ctxCopy: "Copy summary", ctxExport: "Export JSON", ctxTheme: "Toggle theme",
     ctxBook: "Reroll book", ctxParty: "Party mode", ctxLang: "한국어",
     ctxHello: "What is this?",
+    ctxRedact: "Hide the numbers", ctxUnredact: "Show the numbers",
+    redactOn: "Numbers hidden — safe to screenshot", redactOff: "Numbers visible again",
     helloTitle: "Hey — this is ccstats.",
     helloSub: "A picture of how you actually use Claude Code, built from the transcripts already sitting on this machine.",
     helloItems: [
@@ -1484,6 +1540,7 @@ const LANGS = {
       "<b>This never leaves your machine.</b> It reads usage metadata only — timestamps, model names, token counts, a hashed session id. " +
       "Not your messages, not your prompts, not your file or project names. The page makes no network requests and a Content-Security-Policy enforces it.",
     helloHint: "Right-click anywhere to see this again",
+    helloDontShow: "Don't show this again",
     helloGo: "Let's go",
     priceWarn: (names, n) =>
       n === 1
@@ -1623,6 +1680,8 @@ const LANGS = {
     ctxCopy: "요약 복사", ctxExport: "JSON 내보내기", ctxTheme: "테마 전환",
     ctxBook: "다른 책으로", ctxParty: "파티 모드", ctxLang: "English",
     ctxHello: "이게 뭔가요?",
+    ctxRedact: "숫자 가리기", ctxUnredact: "숫자 보이기",
+    redactOn: "숫자를 가렸습니다 — 캡처해도 안전해요", redactOff: "숫자를 다시 표시합니다",
     helloTitle: "안녕하세요 — ccstats입니다.",
     helloSub: "이 컴퓨터에 이미 쌓여 있는 대화 기록으로 그린, 당신의 실제 Claude Code 사용 그림입니다.",
     helloItems: [
@@ -1636,6 +1695,7 @@ const LANGS = {
       "<b>이 데이터는 컴퓨터 밖으로 나가지 않습니다.</b> 사용 메타데이터만 읽습니다 — 시각, 모델 이름, 토큰 수, 해시된 세션 id. " +
       "메시지 내용도, 프롬프트도, 파일이나 프로젝트 이름도 읽지 않습니다. 이 페이지는 네트워크 요청을 하지 않으며 CSP로 강제됩니다.",
     helloHint: "아무 데나 우클릭하면 다시 볼 수 있어요",
+    helloDontShow: "다시 보지 않기",
     helloGo: "시작하기",
     priceWarn: (names) =>
       "<b>" + names + "</b>의 단가가 표에 없어 비용이 대략적인 추정치입니다. ccstats.config.json에 단가를 넣으면 정확해집니다.",
@@ -1818,6 +1878,8 @@ const ICONS = {
   mouse: '<rect x="6" y="2" width="12" height="20" rx="6"/><path d="M12 7v3"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   sliders: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  eyeoff: '<path d="M10.7 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.9 17.9 0 0 1-3 3.9"/><path d="M6.2 6.2A17.7 17.7 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 4.5-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M2 2l20 20"/>',
   pie: '<circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/>',
   bars: '<rect x="3" y="10" width="5" height="11" rx="1"/><rect x="10" y="4" width="5" height="17" rx="1"/><rect x="17" y="14" width="5" height="7" rx="1"/>',
 };
@@ -1834,6 +1896,8 @@ const dayKeys = Object.keys(DATA.days).sort();
 const CARD_KEYS = ["sessions", "messages", "tokens", "activeDays",
                    "curStreak", "maxStreak", "peakHour", "favModel"];
 let range = "all", tab = "overview";
+// screenshot / screen-share mode — blurs the figures, keeps the layout
+let redacted = localStorage.getItem("ccstats-redacted") === "1";
 // today-card yesterday comparison; renderToday rebuilds its innerHTML, so the open/closed
 // state has to live out here rather than on the DOM node
 let cmpOpen = localStorage.getItem("ccstats-today-cmp") === "1";
@@ -2513,6 +2577,7 @@ function bindDayHover(el) {
   el.addEventListener("mouseover", (e) => {
     const k = e.target.dataset && e.target.dataset.k;
     if (!k) return;
+    if (redacted) return; // this popup is nothing but figures
     tip.innerHTML = tipHTML(k);
     tip.style.display = "block";
     tipMode = "day";
@@ -2535,8 +2600,13 @@ bindDayHover(document.getElementById("chart"));
 document.addEventListener("mouseover", (e) => {
   const el = e.target.closest && e.target.closest("[data-exact],[data-tip]");
   if (el) {
+    // The hourly bars put a table of figures in data-tip, so the whole tooltip goes; everywhere
+    // else only the data-exact line is a value and the prose explainer can stay.
+    if (redacted && el.closest(".thbar")) { tip.style.display = "none"; tipMode = null; return; }
+    const exact = el.dataset.exact && !redacted;
+    if (redacted && !el.dataset.tip) { tip.style.display = "none"; tipMode = null; return; }
     tip.innerHTML =
-      (el.dataset.exact ? '<div class="tdate">' + el.dataset.exact + "</div>" : "") +
+      (exact ? '<div class="tdate">' + el.dataset.exact + "</div>" : "") +
       (el.dataset.tip ? '<div class="tdesc">' + el.dataset.tip + "</div>" : "");
     tip.style.display = "block";
     tipMode = "exact";
@@ -2831,6 +2901,8 @@ function setLang(next) {
   localStorage.setItem("ccstats-lang", lang);
   applyStatic();
   render(); // every pane is rebuilt from T(), so one re-render retranslates the whole page
+  // the welcome dialog is outside .wrap, so render() does not reach it
+  if (helloEl && !helloEl.hidden) paintHello();
 }
 document.querySelectorAll("[data-lang]").forEach((b) =>
   b.addEventListener("click", () => setLang(b.dataset.lang))
@@ -2882,6 +2954,7 @@ ctx.innerHTML =
   '<li class="el" data-act="theme">' + icon("moon") + '<span data-i18n="ctxTheme"></span></li>' +
   '<li class="el" data-act="lang">' + icon("globe") + '<span data-i18n="ctxLang"></span></li>' +
   '<li class="el" data-act="book">' + icon("book") + '<span data-i18n="ctxBook"></span></li>' +
+  '<li class="el" data-act="redact">' + icon("eyeoff") + '<span data-i18n="ctxRedact"></span></li>' +
   '<li class="el" data-act="hello">' + icon("sparkles") + '<span data-i18n="ctxHello"></span></li>' +
   '</ul><div class="sep"></div><ul>' +
   '<li class="el special" data-act="party">' + icon("sparkles") + '<span data-i18n="ctxParty"></span></li>' +
@@ -2889,6 +2962,20 @@ ctx.innerHTML =
 document.body.appendChild(ctx);
 
 function closeCtx() { ctx.classList.remove("open"); }
+
+// Redacted mode. Blurring a number is theatre if hovering it still prints the exact value, so
+// this also gates every tooltip that carries one — data-exact, the per-day heat/chart popups,
+// and the hourly bars, whose data-tip is a table of figures. The plain explainer tooltips are
+// prose about what a stat means and stay.
+function setRedacted(on) {
+  redacted = on;
+  localStorage.setItem("ccstats-redacted", on ? "1" : "0");
+  document.body.classList.toggle("redacted", on);
+  tip.style.display = "none";
+  const item = ctx.querySelector('[data-act="redact"]');
+  if (item) item.innerHTML = icon(on ? "eye" : "eyeoff") + "<span>" + T(on ? "ctxUnredact" : "ctxRedact") + "</span>";
+  toast(T(on ? "redactOn" : "redactOff"));
+}
 
 // "Copy summary" copies whatever you right-clicked ON — a heatmap day, an hour bar, a model
 // row, a stat card — and only falls back to the whole-range summary on background. The menu
@@ -2964,6 +3051,11 @@ let ctxCopy = null;
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   ctxCopy = copyContext(e.target);
+  // applyStatic() resets this row from data-i18n on every language change, so the label is
+  // re-derived from the live state each time the menu opens rather than only on toggle
+  const rl = ctx.querySelector('[data-act="redact"]');
+  if (rl) rl.innerHTML = icon(redacted ? "eye" : "eyeoff") +
+    "<span>" + T(redacted ? "ctxUnredact" : "ctxRedact") + "</span>";
   ctx.querySelector('[data-act="copy"] span').textContent =
     ctxCopy.label ? T("ctxCopyOf", ctxCopy.label) : T("ctxCopy");
   ctx.classList.add("open");
@@ -3014,6 +3106,7 @@ ctx.addEventListener("click", (e) => {
     case "theme": themeInput.click(); break;
     case "lang": setLang(lang === "en" ? "ko" : "en"); break;
     case "book": rollBook(); break;
+    case "redact": setRedacted(!redacted); break;
     case "hello": closeCtx(); showHello(); break;
     case "party":
       document.body.classList.toggle("party");
@@ -3049,18 +3142,29 @@ setInterval(pollLive, 60000);
 
 // --- first launch: a hello, and what to do with the thing ---
 const helloEl = document.getElementById("hello");
-function showHello() {
+// Split from showHello so switching language repaints the open dialog in place — setLang's
+// render() rebuilds the panes, but this dialog lives outside .wrap and would otherwise keep
+// the text of the language you just switched away from.
+function paintHello() {
   document.getElementById("helloMark").innerHTML = icon("sparkles");
   document.getElementById("helloList").innerHTML = T("helloItems")
     .map(([ic, html]) => "<li>" + icon(ic) + "<span>" + html + "</span></li>").join("");
   document.getElementById("helloPrivacy").innerHTML = T("helloPrivacy");
   helloEl.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = T(el.dataset.i18n); });
+  helloEl.querySelectorAll("[data-lang]").forEach((b) => b.classList.toggle("on", b.dataset.lang === lang));
+}
+function showHello() {
+  paintHello();
   helloEl.hidden = false;
   document.getElementById("helloGo").focus();
 }
 function dismissHello() {
   helloEl.hidden = true;
-  localStorage.setItem("ccstats-welcomed", "1");
+  // "1" suppresses it, "0" means show it again next launch. Ticked by default, so the standing
+  // behaviour is unchanged — a dashboard you open daily should not greet you every time — but
+  // unticking is now the way to keep it, rather than the dialog being silently one-shot.
+  const again = document.getElementById("helloAgain");
+  localStorage.setItem("ccstats-welcomed", !again || again.checked ? "1" : "0");
 }
 document.getElementById("helloGo").addEventListener("click", () => {
   const r = document.getElementById("helloGo").getBoundingClientRect();
@@ -3071,6 +3175,7 @@ document.getElementById("helloGo").addEventListener("click", () => {
 helloEl.addEventListener("click", (e) => { if (e.target === helloEl) dismissHello(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !helloEl.hidden) dismissHello(); });
 
+document.body.classList.toggle("redacted", redacted); // restore before first paint
 applyStatic();
 render();
 // splash loader: hold ~1s, then fade and replay the entrance animations
@@ -3080,7 +3185,7 @@ setTimeout(() => {
   render();
   setTimeout(() => loader.remove(), 500);
   // after the splash, not during it — two overlapping overlays on first run looks broken
-  if (!localStorage.getItem("ccstats-welcomed")) setTimeout(showHello, 260);
+  if (localStorage.getItem("ccstats-welcomed") !== "1") setTimeout(showHello, 260);
 }, 1000);
 </script>
 </body>
