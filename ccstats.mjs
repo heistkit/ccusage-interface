@@ -390,6 +390,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     background: rgba(64, 196, 99, .18);
     color: var(--accent); font-weight: 800; font-size: 16px; flex-shrink: 0;
   }
+  .dsign .icon { width: 15px; height: 15px; vertical-align: 0; }
 
   /* refresh button: From Uiverse.io by JaydipPrajapati1910 (retokenized, .button→.rbtn) */
   .rbtn {
@@ -1277,7 +1278,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     <div class="coststrip" id="coststrip">
       <div>
         <div class="clabel"><span data-i18n="costLabel" data-tip-key="costTip">Est. API cost</span> <span id="costrange"></span></div>
-        <div class="cval" id="costval">$0</div>
+        <div class="cval" id="costval"></div>
       </div>
       <div class="cbreak" id="costbreak"></div>
       <!-- From Uiverse.io by Uncannypotato69 (Tailwind converted to vanilla) -->
@@ -1826,8 +1827,11 @@ function renderNoData() {
     "</div>";
 }
 
+let noDataMode = false;
 function render() {
-  if (!dayKeys.length) return renderNoData();
+  // renderNoData() replaces the whole shell, so once we are in that state there is nothing left
+  // for a normal render to write into — see pollLive, which reloads instead of re-rendering.
+  if (!dayKeys.length) { noDataMode = true; return renderNoData(); }
   const keys = keysInRange();
   const a = aggregate(keys);
   const st = streaks(keys);
@@ -1959,7 +1963,9 @@ function renderToday() {
     '<div class="ttitle"><span>' + T("todayLabel", now) + "</span><span>" + icon("clock") + " " +
     T("busiest", T("hour", busiest)) + "</span></div>" +
     '<div class="tstats">' +
-    '<span class="tcost"><span class="dsign">$</span> <b>' + fmtUsd(cost) + "</b></span>" +
+    // an icon, not the currency glyph: fmtUsd already prints the symbol, so a literal one here
+    // rendered as "$ $282" — harmless-looking in USD, plainly wrong as "€ €210"
+    '<span class="tcost"><span class="dsign">' + icon("dollar") + "</span> <b>" + fmtUsd(cost) + "</b></span>" +
     '<span><span class="ichip">' + icon("hash") + "</span> " + exb(toks) + " " + T("unitTokens") + "</span>" +
     '<span><span class="ichip">' + icon("message") + "</span> <b>" + d.msgs.toLocaleString() + "</b> " + T("unitMsgs") + "</span>" +
     '<span><span class="ichip">' + icon("folder") + "</span> <b>" + d.sessions.length + "</b> " + T("unitSessions") + "</span>" +
@@ -2160,7 +2166,9 @@ function walletHTML(a) {
   // Real cents for the odometer. Floor to whole cents first so the dollar part and the
   // reels come from one number — rounding the dollars separately (fmtUsd rounds at >=100)
   // would let "$1,404" sit next to cents belonging to 1403.96.
-  const totalCents = Math.max(0, Math.floor(a.cost * 100));
+  // cvt() first: the reels are the real cents of the *displayed* figure, so with a currency
+  // override they have to come from the converted number or they contradict every other total
+  const totalCents = Math.max(0, Math.floor(cvt(a.cost) * 100));
   const whole = Math.floor(totalCents / 100), cents = totalCents % 100;
   // line 10 of the reel is also "0", so a zero digit still rolls a full turn instead of
   // sitting still at line 0
@@ -2175,7 +2183,7 @@ function walletHTML(a) {
     '<header class="whead"><div class="hrow">' +
     '<div class="wallet"><div class="icon-wrapper">' + icon("wallet") + "</div>" +
     '<div><p class="wtitle">' + T("walletTitle", rangeLabel) + '</p>' +
-    '<p class="wbalance" data-tip="' + attr(T("tipBalance")) + '">$' + whole.toLocaleString() +
+    '<p class="wbalance" data-tip="' + attr(T("tipBalance")) + '">' + CUR.symbol + whole.toLocaleString() +
     '<span class="wdot">.</span><span class="digits wdigits" style="--t1:' + reel(Math.floor(cents / 10)) +
     ";--t2:" + reel(cents % 10) + '"></span></p></div></div>' +
     '<label class="close"><input type="checkbox" id="wtoggle" class="wtoggle"' + (walletCollapsed ? " checked" : "") + ">" + icon("x") + "</label>" +
@@ -2299,7 +2307,14 @@ document.addEventListener("mousemove", (e) => {
 });
 
 // --- count-up animations ---
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 function animateNum(el, target, format) {
+  // Write the final value FIRST. requestAnimationFrame does not run in a backgrounded tab, in a
+  // window that is not compositing, or under some remote-render setups — and a headline number
+  // that only exists if an animation played is a number that is sometimes simply missing. The
+  // count-up then overwrites this from zero; if it never starts, the right answer is already up.
+  el.textContent = format(target);
+  if (reducedMotion) return;
   const dur = 700, t0 = performance.now();
   const ease = (t) => 1 - Math.pow(1 - t, 3);
   function frame(now) {
@@ -2482,7 +2497,7 @@ document.getElementById("cards").addEventListener("click", (e) => {
   if (++tokClicks >= 5) {
     tokClicks = 0;
     const r = card.getBoundingClientRect();
-    confetti(r.left + r.width / 2, r.top + r.height / 2, { n: 22, text: "$" });
+    confetti(r.left + r.width / 2, r.top + r.height / 2, { n: 22, text: CUR.symbol });
     const v = card.querySelector(".value"), orig = v.textContent;
     v.textContent = T("sry");
     setTimeout(() => (v.textContent = orig), 2000);
@@ -2748,6 +2763,9 @@ async function pollLive() {
       DATA.days = fresh.days;
       dayKeys.length = 0;
       dayKeys.push(...Object.keys(DATA.days).sort());
+      // first usage arriving while the empty-state shell is up: the dashboard markup is gone,
+      // so rebuild it from scratch rather than rendering into elements that no longer exist
+      if (noDataMode && dayKeys.length) return location.reload();
       render();
     }
   } catch {} // static file / no server — stay silent

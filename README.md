@@ -25,9 +25,28 @@ node ccstats.mjs --serve   # live dashboard on http://127.0.0.1:8743
   stat card. Right-click the background for the whole-range summary.
 - English / 한국어, light / dark, and a few easter eggs.
 
+## Download
+
+Grab it from [**Releases**](https://github.com/heistkit/ccusage-interface/releases):
+
+| | |
+|---|---|
+| `ccstats.mjs` | the whole tool, one file, fonts already inlined |
+| `ccstats-<version>.zip` | same file plus double-click launchers for Windows and macOS |
+
+```bash
+node ccstats.mjs --serve --open
+```
+
+From the zip, double-click `ccstats.cmd` (Windows) or `ccstats.command` (macOS) instead.
+
+Cloning the repo works too, but then `geist-fonts.css` has to sit beside `ccstats.mjs` — the
+release build bakes it in, the repo build reads it off disk and falls back to system fonts
+without it.
+
 ## Requirements
 
-Node 18 or newer. That's it.
+Node 18 or newer. That's it. No install, no dependencies, no network access.
 
 ## Usage
 

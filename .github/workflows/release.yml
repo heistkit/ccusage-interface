@@ -1,0 +1,79 @@
+name: release
+
+# Push a tag, get a Release. Uses the GITHUB_TOKEN that Actions injects automatically, so no
+# personal access token needs to exist anywhere:
+#
+#   git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # lets you re-run it by hand from the Actions tab
+
+permissions:
+  contents: write # required to create the Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Bakes geist-fonts.css into the script so the download is a single file.
+      - name: Build single-file artifact
+        run: node tools/bundle.mjs
+
+      # Runs the built artifact over synthetic transcripts and checks the numbers it produces.
+      # A release that cannot generate a working page must never reach the Releases page.
+      - name: Smoke-test the artifact
+        run: node tools/smoke.mjs
+
+      - name: Assemble the zip
+        run: |
+          set -euo pipefail
+          mkdir -p pkg
+          cp dist/ccstats.mjs README.md LICENSE pkg/
+          cp tools/launchers/ccstats.cmd tools/launchers/ccstats.command pkg/
+          chmod +x pkg/ccstats.command
+          cd pkg && zip -qr "../ccstats-${GITHUB_REF_NAME}.zip" .
+
+      - name: Write the release notes
+        run: |
+          cat > NOTES.md <<'EOF'
+          ### Download one of these
+
+          | | |
+          |---|---|
+          | **`ccstats.mjs`** | The whole tool, one file. Fonts already inlined. |
+          | **`ccstats-<version>.zip`** | Same file plus double-click launchers for Windows and macOS. |
+
+          ### Run it
+
+          ```bash
+          node ccstats.mjs --serve --open
+          ```
+
+          Or from the zip, double-click `ccstats.cmd` (Windows) / `ccstats.command` (macOS).
+
+          Needs Node 18+. Nothing else — no install, no dependencies, no network requests.
+          Writing a static page instead: `node ccstats.mjs`
+
+          ### Privacy
+
+          Reads usage metadata only from the transcripts Claude Code already writes locally:
+          timestamps, model names, token counts, and a truncated session-id hash. Never message
+          content, prompts, file paths, or project names. Verified by the smoke test that gated
+          this build.
+          EOF
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "ccstats $GITHUB_REF_NAME" \
+            --notes-file NOTES.md \
+            dist/ccstats.mjs "ccstats-${GITHUB_REF_NAME}.zip"
