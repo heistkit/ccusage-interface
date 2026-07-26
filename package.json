@@ -1,7 +1,7 @@
 {
   "name": "ccusage-interface",
   "version": "1.1.0",
-  "description": "A local usage dashboard for Claude Code. Reads the JSONL transcripts it already writes and generates a single self-contained HTML page. No dependencies, no network.",
+  "description": "A local usage dashboard for Claude Code. Reads the JSONL transcripts it already writes and generates a single self-contained HTML page. No dependencies, no build step. Includes Vercel Web Analytics for usage tracking.",
   "type": "module",
   "bin": {
     "ccstats": "ccstats.mjs",

@@ -5,7 +5,7 @@ transcripts Claude Code already writes on your machine — the same files
 [`ccusage`](https://github.com/ryoppippi/ccusage) reads — and turns them into a single
 self-contained HTML page.
 
-One file in, one file out. No dependencies, no build step, no network requests.
+One file in, one file out. No dependencies, no build step. Includes Vercel Web Analytics for usage tracking.
 
 ```bash
 node ccstats.mjs           # build ccstats.html next to the script
@@ -78,8 +78,8 @@ the repo build reads it off disk and falls back to system fonts without it.
 
 ## Requirements
 
-Node 18 or newer. That's it. No install step, no dependencies, no network access — not from the
-tool, and not from the page it generates.
+Node 18 or newer. That's it. No install step, no dependencies. The generated page includes
+Vercel Web Analytics for usage tracking.
 
 ## Usage
 
@@ -108,8 +108,8 @@ Transcript location is auto-detected from `CLAUDE_CONFIG_DIR`, then `~/.claude/p
 
 ccstats reads **usage metadata only**: timestamps, model names, token counts, and a truncated
 hash of each session id. It never reads message content, prompts, file paths, or project names.
-It makes no network requests, and neither does the page it generates — fonts and data are inlined,
-so the output works from `file://` and offline.
+Fonts and data are inlined, so the output works from `file://` and offline. The generated page
+includes Vercel Web Analytics which makes network requests to track page views and usage analytics.
 
 The generated `ccstats.html` does embed *your* numbers, though, so it is gitignored here. If you
 share one, know that you are sharing your day-by-day token counts and estimated spend.

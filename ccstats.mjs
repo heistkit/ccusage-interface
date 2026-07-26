@@ -3,7 +3,7 @@
 //
 // Reads the JSONL transcripts Claude Code already writes on this machine (the same files
 // ccusage reads) and generates a single self-contained HTML page. No dependencies, no build
-// step, no network: everything it needs — fonts included — is inlined into the output.
+// step, fonts and data inlined: everything it needs — fonts included — is inlined into the output.
 //
 //   node ccstats.mjs            build ccstats.html next to this script
 //   node ccstats.mjs --serve    live dashboard on http://127.0.0.1:8743
@@ -12,7 +12,7 @@
 // PRIVACY: this reads only usage metadata — timestamps, model names, token counts, and a
 // hashed session id. It never reads, stores, or transmits the content of your messages, your
 // prompts, your file paths, or your project names. See collect() below; that loop is the
-// entire surface. Nothing is uploaded anywhere, by anything, ever.
+// entire surface. The generated HTML includes Vercel Web Analytics which tracks page views.
 import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -205,8 +205,9 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
 <!-- Belt and braces on the privacy claim: this page has no reason to touch the network, and
      this policy makes that unenforceable-by-accident rather than merely true today. 'self' on
      connect-src is what lets the --serve build poll its own /data.json; the static file has
-     nothing to connect to. No CDN, no font host, no analytics, no img-src beyond data: -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; img-src data:; connect-src 'self'; form-action 'none'; base-uri 'none'">
+     nothing to connect to. No CDN, no font host, no analytics, no img-src beyond data:
+     NOTE: Vercel Web Analytics has been added, which allows connections to cdn.vercel-insights.com -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' https://cdn.vercel-insights.com; font-src data:; img-src data:; connect-src 'self' https://cdn.vercel-insights.com https://*.vercel-insights.com; form-action 'none'; base-uri 'none'">
 <meta name="referrer" content="no-referrer">
 <title>ccstats</title>
 <style>__FONTS__</style>
@@ -1339,6 +1340,8 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   #tip .tdesc { color: var(--muted); font-size: 14.5px; line-height: 1.45; }
   #tip .tdate + .tdesc { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; }
 </style>
+<!-- Vercel Web Analytics -->
+<script defer src="https://cdn.vercel-insights.com/v1/script.js"></script>
 </head>
 <body>
 <!-- From Uiverse.io by mobinkakei -->
@@ -1597,7 +1600,7 @@ const LANGS = {
     ],
     helloPrivacy:
       "<b>This never leaves your machine.</b> It reads usage metadata only — timestamps, model names, token counts, a hashed session id. " +
-      "Not your messages, not your prompts, not your file or project names. The page makes no network requests and a Content-Security-Policy enforces it.",
+      "Not your messages, not your prompts, not your file or project names. The page includes Vercel Web Analytics for usage tracking.",
     helloHint: "Right-click anywhere to see this again",
     helloDontShow: "Don't show this again",
     helloGo: "Let's go",
@@ -3817,8 +3820,8 @@ Options
 Privacy
   Reads only usage metadata from the transcripts Claude Code already writes locally:
   timestamps, model names, token counts, and a hashed session id. Never reads message
-  content, prompts, file paths, or project names. Makes no network requests, and the
-  page it generates makes none either — fonts and data are inlined.
+  content, prompts, file paths, or project names. The tool makes no network requests, but the
+  page it generates includes Vercel Web Analytics for usage tracking. Fonts and data are inlined.
 
 Data location
   Auto-detected from CLAUDE_CONFIG_DIR, then ~/.claude/projects, then

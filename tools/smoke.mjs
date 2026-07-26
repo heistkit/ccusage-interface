@@ -79,7 +79,11 @@ const check = (label, ok, detail) => {
 
 check("page was written", html.length > 50_000, Math.round(html.length / 1024) + " KB");
 check("fonts inlined", (html.match(/@font-face/g) || []).length >= 2);
-check("no external references", !/(src|href)="(?!#)(https?:|\/\/)/.test(html));
+// Allow Vercel Analytics CDN as an expected external reference
+const hasVercelAnalytics = html.includes('cdn.vercel-insights.com');
+const htmlWithoutVercel = html.replace(/https:\/\/cdn\.vercel-insights\.com[^"']*/g, '');
+const hasOtherExternal = /(src|href)="(?!#)(https?:|\/\/)/.test(htmlWithoutVercel);
+check("no external references (except Vercel Analytics)", !hasOtherExternal && hasVercelAnalytics);
 
 // The embedded payload is the source of truth for every number the page renders, so parse it
 // and check the arithmetic rather than grepping the HTML for digits that happen to appear.
