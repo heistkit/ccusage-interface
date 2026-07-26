@@ -429,8 +429,51 @@
   }
   .hello-head { display: flex; gap: 14px; align-items: flex-start; }
   .hello-heading { flex: 1; min-width: 0; }
-  .hello-langs { flex-shrink: 0; margin: -2px -4px 0 0; background: var(--chip); }
-  .hello-langs button { font-size: 13px; padding: 4px 9px; }
+  .hello-langs { flex-shrink: 0; margin: -2px -4px 0 0; }
+
+  /* Language picker. Was a two-button pill, which stops working the moment there is more than a
+     couple of languages — this is a popover list instead, and it carries the beta marker so the
+     status of a translation is visible at the point you choose it, not buried in a README. */
+  .langpick { position: relative; flex-shrink: 0; }
+  .langbtn {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    font: inherit; font-size: 14px; font-weight: 600; color: var(--muted);
+    background: var(--card); border: 0; border-radius: 10px; padding: 7px 11px;
+    transition: color .15s, background-color .15s;
+  }
+  .langbtn:hover, .langbtn:focus-visible, .langpick.open .langbtn { color: var(--text); background: var(--chip); }
+  .langbtn .icon { width: 15px; height: 15px; vertical-align: 0; }
+  .langbtn .chev { width: 12px; height: 12px; transition: transform .2s ease; }
+  .langpick.open .langbtn .chev { transform: rotate(180deg); }
+  .langlist {
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; min-width: 176px;
+    margin: 0; padding: 5px; list-style: none;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 14px 34px rgba(0,0,0,.22);
+    opacity: 0; transform: translateY(-6px); pointer-events: none;
+    transition: opacity .16s ease, transform .16s cubic-bezier(.22,1,.36,1);
+  }
+  .langpick.open .langlist { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  .langopt {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    font: inherit; font-size: 14px; font-weight: 600; color: var(--text);
+    background: none; border: 0; border-radius: 8px; padding: 7px 9px; cursor: pointer;
+    transition: background-color .14s ease;
+  }
+  .langopt:hover, .langopt:focus-visible { background: var(--chip); }
+  .langopt.on { color: var(--accent); }
+  .langopt .lname { flex: 1; min-width: 0; }
+  .langopt .lbeta {
+    font-size: 11px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+    color: var(--muted); background: var(--chip); border-radius: 5px; padding: 1px 5px;
+  }
+  .langopt.on .lbeta { background: var(--cell); }
+  .langopt .lcheck { width: 14px; height: 14px; opacity: 0; vertical-align: 0; }
+  .langopt.on .lcheck { opacity: 1; }
+  .langnote {
+    margin: 4px 5px 1px; padding-top: 6px; border-top: 1px solid var(--border);
+    font-size: 12px; line-height: 1.45; color: var(--muted);
+  }
   .hello-mark {
     flex-shrink: 0; width: 44px; height: 44px; border-radius: 13px; background: var(--chip);
     display: grid; place-items: center; color: var(--accent);
@@ -1112,10 +1155,7 @@
       <!-- Language belongs here, not only in the top bar: this dialog is the first thing anyone
            sees, and it is the one screen you cannot read your way out of if it opened in the
            wrong language. Same [data-lang] hook as the top bar, so one handler drives both. -->
-      <div class="ranges langs hello-langs">
-        <button data-lang="en">EN</button>
-        <button data-lang="ko">한</button>
-      </div>
+      <div class="langpick hello-langs" id="langpickHello"></div>
     </div>
     <ul class="hello-list" id="helloList"></ul>
     <div class="hello-privacy" id="helloPrivacy"></div>
@@ -1167,10 +1207,7 @@
         <button data-range="30" data-i18n="r30">30d</button>
         <button data-range="7" data-i18n="r7">7d</button>
       </div>
-      <div class="ranges langs" data-tip-key="tipLang">
-        <button data-lang="en">EN</button>
-        <button data-lang="ko">한</button>
-      </div>
+      <div class="langpick" id="langpick" data-tip-key="tipLang"></div>
       <!-- From Uiverse.io by RiccardoRapelli -->
       <label class="switch" data-tip-key="tipTheme">
         <input id="themeInput" type="checkbox" />
@@ -1329,6 +1366,8 @@ const LANGS = {
     ctxCopy: "Copy summary", ctxExport: "Export JSON", ctxTheme: "Toggle theme",
     ctxBook: "Reroll book", ctxParty: "Party mode", ctxLang: "한국어",
     ctxHello: "What is this?",
+    langBeta: "beta",
+    langBetaNote: "Everything but English was written in one pass and has not been reviewed by a native speaker.",
     ctxRedact: "Hide the numbers", ctxUnredact: "Show the numbers",
     redactOn: "Numbers hidden — safe to screenshot", redactOff: "Numbers visible again",
     helloTitle: "Hey — this is ccstats.",
@@ -1484,6 +1523,8 @@ const LANGS = {
     ctxCopy: "요약 복사", ctxExport: "JSON 내보내기", ctxTheme: "테마 전환",
     ctxBook: "다른 책으로", ctxParty: "파티 모드", ctxLang: "English",
     ctxHello: "이게 뭔가요?",
+    langBeta: "베타",
+    langBetaNote: "영어 외의 언어는 한 번에 작성되었으며 원어민 검수를 거치지 않았습니다.",
     ctxRedact: "숫자 가리기", ctxUnredact: "숫자 보이기",
     redactOn: "숫자를 가렸습니다 — 캡처해도 안전해요", redactOff: "숫자를 다시 표시합니다",
     helloTitle: "안녕하세요 — ccstats입니다.",
@@ -1537,18 +1578,450 @@ const LANGS = {
     sry: "앤트로픽 미안",
     partyTitle: "ccstats — 파티 모드",
   },
+  // --- beta translations ---------------------------------------------------------------
+  // Written in one pass, not reviewed by native speakers. T() falls back to en key by key, so
+  // anything omitted or later removed here renders in English rather than as "undefined".
+  // Proper nouns are deliberately left to fall back: book titles and the IRL shopping list are
+  // brands and works with their own local names, and guessing at them reads worse than English.
+  ja: {
+    locale: "ja-JP",
+    tabOverview: "概要", tabModels: "モデル別",
+    tipTabOverview: "合計、ヒートマップ、日次グラフ。",
+    tipTabModels: "モデルごとの支出とトークン。",
+    today: "今日", refresh: "更新",
+    rAll: "全期間", r30: "30日", r7: "7日",
+    tipRange: (r) => (r === "all" ? "記録のあるすべての日。" : "直近" + r + "日間。"),
+    tipRefresh: "最新のデータで再計算し、アニメーションを最初から再生します。",
+    tipTheme: "ライト / ダーク。",
+    tipLang: "表示言語",
+    tipToday: "今日のカードへ移動します。",
+    costLabel: "推定APIコスト", ofAll: "全期間", ofDays: (n) => "直近" + n + "日間",
+    brInput: "入力", brOutput: "出力", brCacheWrite: "キャッシュ書き込み", brCacheRead: "キャッシュ読み込み",
+    chartTitle: "日次トークン",
+    costTip: "各モデルの公開単価（100万トークンあたり）で計算します。キャッシュ書き込みは入力の1.25倍、読み込みは0.1倍。請求書ではなく推定値です。",
+    chartTip: "1日あたりのトークン。棒にカーソルを合わせるとその日の内訳、クリックすると火花が出ます。",
+    chartPeak: (n, peak) => "直近" + n + "日 · ピーク " + peak,
+    cards: ["セッション", "メッセージ", "総トークン", "稼働日数", "現在の連続日数", "最長の連続日数", "ピーク時間", "主なモデル"],
+    cardTips: [
+      "この期間に記録された個別のClaude Codeセッション。",
+      "ユーザーとアシスタントのメッセージ。uuidで重複を除去。",
+      "入力・出力・キャッシュ書き込み・キャッシュ読み込みの合計。",
+      "メッセージが1件以上あった日数。",
+      "今日（または昨日）まで続いている連続稼働日数。",
+      "記録上もっとも長く続いた連続稼働日数。",
+      "メッセージがもっとも多い時間帯。",
+      "総トークンがもっとも多いモデル。",
+    ],
+    days: (n) => n + "日",
+    hour: (h) => h + "時",
+    todayLabel: (d) => "今日 · " + d,
+    busiest: (h) => "最も活発なのは" + h,
+    todayEmpty: "まだ何もありません。",
+    noteQuiet: "昨日は静かでした。今日はそうでもありません。",
+    noteBothQuiet: "今日も昨日も課金はありません。",
+    bookNone: "まだ課金対象のトークンがありません — モデルを使うとここに表示されます。",
+    noteHot: (x) => " 昨日の" + x + "倍のペースです。",
+    noteCalm: (p) => " 落ち着いた一日 — 昨日より" + p + "%少なめ。",
+    liveNone: "まだ活動なし",
+    liveMeta: (s, m) => s + " セッション · " + m + " メッセージ",
+    unitActiveHrs: "稼働時間",
+    tipSplit: (l) => "今日の" + l + "トークンにかかった費用です。モデルごとの単価で計算しています。",
+    todayHourly: "時間帯別の支出",
+    todayPeakHour: "最も高い時間",
+    todayByModel: "今日のモデル別",
+    tipHour: (c, t, m, top) =>
+      '<div class="trow"><span>推定コスト</span><b>' + c + "</b></div>" +
+      '<div class="trow"><span>トークン</span><b>' + t + "</b></div>" +
+      '<div class="trow"><span>メッセージ</span><b>' + m + "</b></div>" +
+      '<div class="trow"><span>主なモデル</span><b>' + top + "</b></div>",
+    tipHourIdle: "この時間の課金はありません。",
+    avgTitle: "平均",
+    avgBasis: (d, h) => "稼働" + d + "日 · 稼働" + h + "時間",
+    avgDay: "1日あたり", avgHour: "稼働1時間あたり", avgSession: "1セッションあたり", avgMsg: "1メッセージあたり",
+    tipAvgDay: "期間のコストを、メッセージが1件以上あった日数で割った値です。",
+    tipAvgHour: "期間のコストを、実際に課金が発生した時間数で割った値です。無活動の時間は除きます。",
+    tipAvgSession: "期間のコストをセッション数で割った値です。",
+    tipAvgMsg: "期間のコストを、集計対象の全メッセージ数（ユーザー＋アシスタント）で割った値です。",
+    cmpTitle: "今日と昨日",
+    cmpVs: (d) => d + " との比較",
+    cmpToday: "今日", cmpYesterday: "昨日",
+    cmpTopModel: "主なモデル", cmpActiveHours: "稼働時間",
+    cmpNew: "新規", cmpFlat: "変化なし",
+    cmpNoYesterday: "昨日の記録はありません",
+    footPrefix: "これまでに使ったのは ",
+    footTip: "クリックすると次の本に進みます。",
+    bookLine: (times, book) => "『" + book + "』の約" + times + "倍のトークン。",
+    tipCost: "推定コスト", tipTokens: "トークン", tipMessages: "メッセージ",
+    tipSessions: "セッション", tipPeak: "ピーク時間", tipNone: "活動なし",
+    walletTitle: (r) => "推定支出 · " + r,
+    wAll: "全期間", wDays: (n) => "直近" + n + "日",
+    wTopModels: "よく使うモデル",
+    wModelCount: (n) => "モデル" + n + "件",
+    wTokensOf: (m) => "トークン · " + m,
+    wInput: "入力", wOutput: "出力", wCache: "キャッシュ",
+    wBreakdown: "内訳",
+    wViewDonut: "チャート", wViewBars: "バー",
+    wViewTip: "同じ3つの数値を、バーの内訳とドーナツチャートで切り替えます。",
+    wDonutAlt: "入力・出力・キャッシュのトークン比率",
+    tipBalance: "この期間の推定額の円未満まで。",
+    emptyRange: "この期間のデータはありません",
+    unitTokens: "トークン", unitMsgs: "メッセージ", unitSessions: "セッション",
+    ctxCopy: "サマリーをコピー", ctxExport: "JSONを書き出し", ctxTheme: "テーマ切り替え",
+    ctxBook: "別の本にする", ctxParty: "パーティーモード", ctxLang: "日本語",
+    ctxHello: "これは何ですか？",
+    langBeta: "ベータ",
+    langBetaNote: "英語以外は一括で作成されており、ネイティブによる確認を経ていません。",
+    ctxRedact: "数値を隠す", ctxUnredact: "数値を表示",
+    redactOn: "数値を隠しました — スクリーンショットでも安全です", redactOff: "数値を再表示しました",
+    ctxCopyOf: (what) => what + "をコピー",
+    copied: "サマリーをコピーしました",
+    copiedOf: (what) => what + "をコピーしました",
+    copyFailed: "コピーできませんでした",
+    copyScopeToday: "今日",
+    copyDay: (d, cost, toks, msgs, sess, fav) =>
+      "ccstats " + d + ": 推定APIコスト " + cost + " · " + toks + " トークン · " + msgs +
+      " メッセージ · " + sess + " セッション · 主なモデル " + fav,
+    copyDayEmpty: (d) => "ccstats " + d + ": 活動なし。",
+    copyHour: (h, d, cost, toks, msgs, fav) =>
+      "ccstats " + d + " " + h + ": 推定APIコスト " + cost + " · " + toks + " トークン · " +
+      msgs + " メッセージ · 主なモデル " + fav,
+    copyHourEmpty: (h, d) => "ccstats " + d + " " + h + ": 課金なし。",
+    copyModel: (m, scope, cost, toks, i, o, cw, cr, msgs) =>
+      "ccstats " + m + " (" + scope + "): 推定APIコスト " + cost + " · " + toks + " トークン (入力 " +
+      i + " / 出力 " + o + " / キャッシュ書き込み " + cw + " / キャッシュ読み込み " + cr + ") · " + msgs + " メッセージ",
+    copyCard: (label, value, scope) => "ccstats " + label + " (" + scope + "): " + value,
+    copyLabel: (r) => (r === "all" ? "全期間" : "直近" + r + "日"),
+    copySummary: (label, cost, toks, msgs, sess, act, cur, max, fav) =>
+      "ccstats (" + label + "): 推定APIコスト " + cost + " · " + toks + " トークン · " +
+      msgs + " メッセージ · " + sess + " セッション · " + act + "日稼働 · 連続 " +
+      cur + "日 (最長 " + max + "日)" + (fav ? " · 主なモデル " + fav : ""),
+    helloTitle: "こんにちは — ccstats です。",
+    helloSub: "このマシンにすでに残っている会話ログから描いた、あなたのClaude Codeの使い方です。",
+    helloItems: [
+      ["mouse", "<b>どこでもホバーしてみてください。</b> ヒートマップの日、グラフの棒、時間帯の棒、省略された数値には正確な値がついています。"],
+      ["clipboard", "<b>右クリック</b>でコピー — 指した対象だけが取れます。1日、1時間、1モデル、または全期間。"],
+      ["keyboard", "期間は<b>全期間 / 30日 / 7日</b>、タブは合計とモデル別支出に分かれ、<b>今日</b>のカードを押すと昨日と比較できます。"],
+      ["sliders", "スクリプトの隣に<b>ccstats.config.json</b>を置けば、単価・モデル名・アクセント色・通貨を指定できます。<b>--init-config</b>で雛形が作れます。"],
+      ["sparkles", "隠し要素がいくつかあります。コナミコマンドから試してみてください。"],
+    ],
+    helloPrivacy:
+      "<b>このデータがマシンの外に出ることはありません。</b> 読むのは使用メタデータだけです — 時刻、モデル名、トークン数、ハッシュ化されたセッションID。" +
+      "メッセージの内容も、プロンプトも、ファイル名やプロジェクト名も読みません。このページはネットワーク要求を行わず、CSPで強制されています。",
+    helloHint: "どこでも右クリックすればまた見られます",
+    helloDontShow: "次回から表示しない",
+    helloGo: "はじめる",
+    priceWarn: (names) =>
+      "<b>" + names + "</b>の単価が表にないため、コストは概算です。ccstats.config.jsonに単価を設定すると正確になります。",
+    noDataTitle: "まだ使用記録がありません。",
+    noDataBody: "Claude Codeの会話ログのフォルダを読みましたが、描画できるデータがありませんでした。このマシンでまだClaude Codeを使っていないか、ログが別の場所にある可能性があります。後者の場合は:",
+    noDataFoot: "その他のオプションは node ccstats.mjs --help で確認できます。",
+    irlReroll: "別の3件に入れ替える",
+    irlTitle: (usd) => "現実の" + usd + "は…",
+    irlLine: (amount, name) => "≈ <b>" + amount + "</b> " + name,
+    irlAmount: (n) =>
+      n >= 10 ? Math.round(n).toLocaleString() : n >= 1 ? n.toFixed(1) : (n * 100).toFixed(1) + "% の",
+    sry: "アンソロピックさんごめん",
+    partyTitle: "ccstats — パーティーモード",
+  },
+  zh: {
+    locale: "zh-CN",
+    tabOverview: "概览", tabModels: "按模型",
+    tipTabOverview: "总计、热力图和每日图表。",
+    tipTabModels: "各模型的花费与 token。",
+    today: "今天", refresh: "刷新",
+    rAll: "全部", r30: "30天", r7: "7天",
+    tipRange: (r) => (r === "all" ? "有记录的所有日期。" : "最近 " + r + " 天。"),
+    tipRefresh: "用最新数据重新计算，并从头播放动画。",
+    tipTheme: "浅色 / 深色。",
+    tipLang: "界面语言",
+    tipToday: "跳到今天的卡片。",
+    costLabel: "预估 API 花费", ofAll: "全部时间", ofDays: (n) => "最近 " + n + " 天",
+    brInput: "输入", brOutput: "输出", brCacheWrite: "缓存写入", brCacheRead: "缓存读取",
+    chartTitle: "每日 token",
+    costTip: "按各模型公开的每百万 token 单价计算；缓存写入为输入的 1.25 倍，缓存读取为 0.1 倍。这是估算，不是账单。",
+    chartTip: "每天的 token。将鼠标悬停在柱子上查看当天数据，点击会有火花。",
+    chartPeak: (n, peak) => "最近 " + n + " 天 · 峰值 " + peak,
+    cards: ["会话", "消息", "总 token", "活跃天数", "当前连续", "最长连续", "高峰时段", "常用模型"],
+    cardTips: [
+      "此期间内不同的 Claude Code 会话。",
+      "用户与助手的消息，按 uuid 去重。",
+      "输入、输出、缓存写入与缓存读取的总和。",
+      "至少有一条消息的天数。",
+      "截至今天（或昨天）的连续活跃天数。",
+      "记录中最长的连续活跃天数。",
+      "消息最多的时段。",
+      "总 token 最多的模型。",
+    ],
+    days: (n) => n + "天",
+    hour: (h) => h + "点",
+    todayLabel: (d) => "今天 · " + d,
+    busiest: (h) => "最忙于" + h,
+    todayEmpty: "还没有任何记录。",
+    noteQuiet: "昨天很安静，今天可不是。",
+    noteBothQuiet: "今天和昨天都没有产生费用。",
+    bookNone: "还没有计费的 token — 用过模型之后这里就会有内容。",
+    noteHot: (x) => " 是昨天的 " + x + " 倍。",
+    noteCalm: (p) => " 平静的一天 — 比昨天少 " + p + "%。",
+    liveNone: "暂无活动",
+    liveMeta: (s, m) => s + " 个会话 · " + m + " 条消息",
+    unitActiveHrs: "活跃小时",
+    tipSplit: (l) => "今天" + l + " token 的花费，按各模型自己的单价计算。",
+    todayHourly: "各时段花费",
+    todayPeakHour: "最贵的时段",
+    todayByModel: "今天按模型",
+    tipHour: (c, t, m, top) =>
+      '<div class="trow"><span>预估花费</span><b>' + c + "</b></div>" +
+      '<div class="trow"><span>Token</span><b>' + t + "</b></div>" +
+      '<div class="trow"><span>消息</span><b>' + m + "</b></div>" +
+      '<div class="trow"><span>主要模型</span><b>' + top + "</b></div>",
+    tipHourIdle: "这个时段没有计费。",
+    avgTitle: "平均",
+    avgBasis: (d, h) => d + " 个活跃日 · " + h + " 个活跃小时",
+    avgDay: "每天", avgHour: "每活跃小时", avgSession: "每会话", avgMsg: "每条消息",
+    tipAvgDay: "期间花费除以至少有一条消息的天数。",
+    tipAvgHour: "期间花费除以实际产生计费的小时数，空闲时段不计入。",
+    tipAvgSession: "期间花费除以会话数。",
+    tipAvgMsg: "期间花费除以统计到的全部消息数（用户与助手）。",
+    cmpTitle: "今天与昨天",
+    cmpVs: (d) => "对比 " + d,
+    cmpToday: "今天", cmpYesterday: "昨天",
+    cmpTopModel: "主要模型", cmpActiveHours: "活跃小时",
+    cmpNew: "新增", cmpFlat: "持平",
+    cmpNoYesterday: "昨天没有记录",
+    footPrefix: "你已经用掉了 ",
+    footTip: "点击可切换到下一本书。",
+    bookLine: (times, book) => "约为《" + book + "》的 " + times + " 倍 token。",
+    tipCost: "预估花费", tipTokens: "Token", tipMessages: "消息",
+    tipSessions: "会话", tipPeak: "高峰时段", tipNone: "无活动",
+    walletTitle: (r) => "预估支出 · " + r,
+    wAll: "全部时间", wDays: (n) => "最近 " + n + " 天",
+    wTopModels: "常用模型",
+    wModelCount: (n) => n + " 个模型",
+    wTokensOf: (m) => "Token · " + m,
+    wInput: "输入", wOutput: "输出", wCache: "缓存",
+    wBreakdown: "明细",
+    wViewDonut: "图表", wViewBars: "条形",
+    wViewTip: "在条形明细和同样三个数字的环形图之间切换。",
+    wDonutAlt: "输入、输出与缓存的 token 占比",
+    tipBalance: "该期间预估金额的整数与小数部分。",
+    emptyRange: "该期间没有数据",
+    unitTokens: "token", unitMsgs: "条消息", unitSessions: "个会话",
+    ctxCopy: "复制摘要", ctxExport: "导出 JSON", ctxTheme: "切换主题",
+    ctxBook: "换一本书", ctxParty: "派对模式", ctxLang: "简体中文",
+    ctxHello: "这是什么？",
+    langBeta: "测试版",
+    langBetaNote: "英语以外的语言为一次性生成，未经母语者校对。",
+    ctxRedact: "隐藏数字", ctxUnredact: "显示数字",
+    redactOn: "数字已隐藏 — 可以放心截图", redactOff: "数字已重新显示",
+    ctxCopyOf: (what) => "复制" + what,
+    copied: "已复制摘要",
+    copiedOf: (what) => "已复制" + what,
+    copyFailed: "复制失败",
+    copyScopeToday: "今天",
+    copyDay: (d, cost, toks, msgs, sess, fav) =>
+      "ccstats " + d + ": 预估 API 花费 " + cost + " · " + toks + " token · " + msgs +
+      " 条消息 · " + sess + " 个会话 · 主要模型 " + fav,
+    copyDayEmpty: (d) => "ccstats " + d + ": 无活动。",
+    copyHour: (h, d, cost, toks, msgs, fav) =>
+      "ccstats " + d + " " + h + ": 预估 API 花费 " + cost + " · " + toks + " token · " +
+      msgs + " 条消息 · 主要模型 " + fav,
+    copyHourEmpty: (h, d) => "ccstats " + d + " " + h + ": 没有计费。",
+    copyModel: (m, scope, cost, toks, i, o, cw, cr, msgs) =>
+      "ccstats " + m + " (" + scope + "): 预估 API 花费 " + cost + " · " + toks + " token (输入 " +
+      i + " / 输出 " + o + " / 缓存写入 " + cw + " / 缓存读取 " + cr + ") · " + msgs + " 条消息",
+    copyCard: (label, value, scope) => "ccstats " + label + " (" + scope + "): " + value,
+    copyLabel: (r) => (r === "all" ? "全部时间" : "最近 " + r + " 天"),
+    copySummary: (label, cost, toks, msgs, sess, act, cur, max, fav) =>
+      "ccstats (" + label + "): 预估 API 花费 " + cost + " · " + toks + " token · " +
+      msgs + " 条消息 · " + sess + " 个会话 · " + act + " 个活跃日 · 连续 " +
+      cur + " 天 (最长 " + max + " 天)" + (fav ? " · 常用模型 " + fav : ""),
+    helloTitle: "你好 — 这是 ccstats。",
+    helloSub: "用这台机器上已有的对话记录，画出你实际使用 Claude Code 的样子。",
+    helloItems: [
+      ["mouse", "<b>把鼠标放到任何地方。</b> 热力图的每一天、图表的柱子、时段柱子，以及每个缩写数字都带着精确值。"],
+      ["clipboard", "<b>右键复制</b> — 你点到什么就得到什么：某一天、某一小时、某个模型，或者整个期间。"],
+      ["keyboard", "期间为<b>全部 / 30天 / 7天</b>，标签页分为总计与各模型花费，点击<b>今天</b>卡片可与昨天对比。"],
+      ["sliders", "在脚本旁放一个 <b>ccstats.config.json</b>，即可自定义单价、模型名称、主色或货币。用 <b>--init-config</b> 生成模板。"],
+      ["sparkles", "这里藏了一些东西。可以先试试科拿米秘技。"],
+    ],
+    helloPrivacy:
+      "<b>这些数据不会离开你的机器。</b> 它只读取使用元数据 — 时间、模型名称、token 数量和哈希后的会话 id。" +
+      "不读取你的消息内容、提示词、文件或项目名称。页面不发起任何网络请求，并由 CSP 强制执行。",
+    helloHint: "在任意处右键即可再次查看",
+    helloDontShow: "不再显示",
+    helloGo: "开始吧",
+    priceWarn: (names) =>
+      "<b>" + names + "</b> 不在价格表中，因此花费只是粗略估算。在 ccstats.config.json 中设置单价即可修正。",
+    noDataTitle: "还没有使用记录。",
+    noDataBody: "ccstats 读取了你的 Claude Code 对话记录目录，但没有找到可以绘制的数据。可能是你还没在这台机器上用过 Claude Code，或者记录在别的位置。如果是后者：",
+    noDataFoot: "其余选项请运行 node ccstats.mjs --help 查看。",
+    irlReroll: "换三样别的",
+    irlTitle: (usd) => "现实里，" + usd + " 相当于…",
+    irlLine: (amount, name) => "≈ <b>" + amount + "</b> " + name,
+    irlAmount: (n) =>
+      n >= 10 ? Math.round(n).toLocaleString() : n >= 1 ? n.toFixed(1) : (n * 100).toFixed(1) + "% 的",
+    sry: "对不起 Anthropic",
+    partyTitle: "ccstats — 派对模式",
+  },
+  es: {
+    locale: "es-ES",
+    tabOverview: "Resumen", tabModels: "Modelos",
+    tipTabOverview: "Totales, mapa de calor y gráfico diario.",
+    tipTabModels: "Gasto y tokens por modelo.",
+    today: "Hoy", refresh: "Actualizar",
+    rAll: "Todo", r30: "30d", r7: "7d",
+    tipRange: (r) => (r === "all" ? "Todos los días registrados." : "Últimos " + r + " días."),
+    tipRefresh: "Recalcula con los datos más recientes y repite las animaciones.",
+    tipTheme: "Claro / oscuro.",
+    tipLang: "Idioma de la interfaz",
+    tipToday: "Ir a la tarjeta de hoy.",
+    costLabel: "Coste estimado de API", ofAll: "todo el tiempo", ofDays: (n) => "últimos " + n + " días",
+    brInput: "Entrada", brOutput: "Salida", brCacheWrite: "Escritura de caché", brCacheRead: "Lectura de caché",
+    chartTitle: "Tokens diarios",
+    costTip: "Las tarifas públicas de cada modelo por millón de tokens; escritura de caché 1,25× la entrada, lectura 0,1×. Es una estimación, no una factura.",
+    chartTip: "Tokens por día. Pasa el ratón por una barra para ver ese día; haz clic para las chispas.",
+    chartPeak: (n, peak) => "últimos " + n + " días · máximo " + peak,
+    cards: ["Sesiones", "Mensajes", "Tokens totales", "Días activos", "Racha actual", "Racha máxima", "Hora punta", "Modelo favorito"],
+    cardTips: [
+      "Sesiones distintas de Claude Code en este periodo.",
+      "Mensajes de usuario y asistente, sin duplicados por uuid.",
+      "Entrada, salida, escritura de caché y lectura de caché sumados.",
+      "Días con al menos un mensaje.",
+      "Días activos consecutivos hasta hoy (o ayer).",
+      "La racha más larga de días activos registrada.",
+      "La hora del día con más mensajes.",
+      "El modelo con más tokens en total.",
+    ],
+    days: (n) => n + "d",
+    hour: (h) => (h === 0 ? "12 AM" : h < 12 ? h + " AM" : h === 12 ? "12 PM" : h - 12 + " PM"),
+    todayLabel: (d) => "Hoy · " + d,
+    busiest: (h) => "más activo a las " + h,
+    todayEmpty: "Todavía nada por aquí.",
+    noteQuiet: "Ayer fue tranquilo. Hoy no tanto.",
+    noteBothQuiet: "Nada facturado hoy — ni ayer.",
+    bookNone: "Aún no hay tokens facturables — esto se llena en cuanto uses un modelo.",
+    noteHot: (x) => " Gastando " + x + "× más que ayer.",
+    noteCalm: (p) => " Un día más tranquilo — un " + p + "% menos que ayer.",
+    liveNone: "sin actividad aún",
+    liveMeta: (s, m) => s + " sesiones · " + m + " mensajes",
+    unitActiveHrs: "horas activas",
+    tipSplit: (l) => "Lo que han costado hoy los tokens de " + l + ", al precio propio de cada modelo.",
+    todayHourly: "Gasto por hora",
+    todayPeakHour: "hora más cara",
+    todayByModel: "Hoy por modelo",
+    tipHour: (c, t, m, top) =>
+      '<div class="trow"><span>Coste est.</span><b>' + c + "</b></div>" +
+      '<div class="trow"><span>Tokens</span><b>' + t + "</b></div>" +
+      '<div class="trow"><span>Mensajes</span><b>' + m + "</b></div>" +
+      '<div class="trow"><span>Modelo principal</span><b>' + top + "</b></div>",
+    tipHourIdle: "Nada facturado en esta hora.",
+    avgTitle: "Promedios",
+    avgBasis: (d, h) => d + " días activos · " + h + " horas activas",
+    avgDay: "por día", avgHour: "por hora activa", avgSession: "por sesión", avgMsg: "por mensaje",
+    tipAvgDay: "Coste del periodo dividido entre los días con al menos un mensaje.",
+    tipAvgHour: "Coste del periodo dividido entre las horas que realmente facturaron; las inactivas quedan fuera.",
+    tipAvgSession: "Coste del periodo dividido entre el número de sesiones.",
+    tipAvgMsg: "Coste del periodo dividido entre todos los mensajes contados, de usuario y de asistente.",
+    cmpTitle: "Hoy frente a ayer",
+    cmpVs: (d) => "frente a " + d,
+    cmpToday: "hoy", cmpYesterday: "ayer",
+    cmpTopModel: "Modelo principal", cmpActiveHours: "Horas activas",
+    cmpNew: "nuevo", cmpFlat: "igual",
+    cmpNoYesterday: "ayer no se registró nada",
+    footPrefix: "Has usado ",
+    footTip: "Haz clic para pasar al siguiente libro.",
+    bookLine: (times, book) => "~" + times + "× más tokens que " + book + ".",
+    tipCost: "Coste est.", tipTokens: "Tokens", tipMessages: "Mensajes",
+    tipSessions: "Sesiones", tipPeak: "Hora punta", tipNone: "Sin actividad",
+    walletTitle: (r) => "Gasto estimado · " + r,
+    wAll: "todo el tiempo", wDays: (n) => "últimos " + n + "d",
+    wTopModels: "Modelos principales",
+    wModelCount: (n) => n + " modelos",
+    wTokensOf: (m) => "Tokens · " + m,
+    wInput: "entrada", wOutput: "salida", wCache: "caché",
+    wBreakdown: "Desglose",
+    wViewDonut: "Gráfico", wViewBars: "Barras",
+    wViewTip: "Alterna entre el desglose en barras y un gráfico de anillo con los mismos tres números.",
+    wDonutAlt: "Proporción de tokens por entrada, salida y caché",
+    tipBalance: "Euros y céntimos de la estimación de este periodo.",
+    emptyRange: "No hay datos en este periodo",
+    unitTokens: "tokens", unitMsgs: "mensajes", unitSessions: "sesiones",
+    ctxCopy: "Copiar resumen", ctxExport: "Exportar JSON", ctxTheme: "Cambiar tema",
+    ctxBook: "Otro libro", ctxParty: "Modo fiesta", ctxLang: "Español",
+    ctxHello: "¿Qué es esto?",
+    langBeta: "beta",
+    langBetaNote: "Todo lo que no sea inglés se escribió de una vez y no lo ha revisado un hablante nativo.",
+    ctxRedact: "Ocultar los números", ctxUnredact: "Mostrar los números",
+    redactOn: "Números ocultos — seguro para capturas", redactOff: "Números visibles de nuevo",
+    ctxCopyOf: (what) => "Copiar " + what,
+    copied: "Resumen copiado",
+    copiedOf: (what) => what + " copiado",
+    copyFailed: "No se pudo copiar",
+    copyScopeToday: "hoy",
+    copyDay: (d, cost, toks, msgs, sess, fav) =>
+      "ccstats " + d + ": " + cost + " de coste estimado · " + toks + " tokens · " + msgs +
+      " mensajes · " + sess + " sesiones · modelo principal " + fav,
+    copyDayEmpty: (d) => "ccstats " + d + ": sin actividad.",
+    copyHour: (h, d, cost, toks, msgs, fav) =>
+      "ccstats " + d + " " + h + ": " + cost + " de coste estimado · " + toks + " tokens · " +
+      msgs + " mensajes · modelo principal " + fav,
+    copyHourEmpty: (h, d) => "ccstats " + d + " " + h + ": nada facturado.",
+    copyModel: (m, scope, cost, toks, i, o, cw, cr, msgs) =>
+      "ccstats " + m + " (" + scope + "): " + cost + " de coste estimado · " + toks + " tokens (" +
+      i + " entrada / " + o + " salida / " + cw + " escritura de caché / " + cr + " lectura de caché) · " + msgs + " mensajes",
+    copyCard: (label, value, scope) => "ccstats " + label + " (" + scope + "): " + value,
+    copyLabel: (r) => (r === "all" ? "todo el tiempo" : "últimos " + r + " días"),
+    copySummary: (label, cost, toks, msgs, sess, act, cur, max, fav) =>
+      "ccstats (" + label + "): " + cost + " de coste estimado · " + toks + " tokens · " +
+      msgs + " mensajes · " + sess + " sesiones · " + act + " días activos · racha " +
+      cur + "d (máx. " + max + "d)" + (fav ? " · modelo favorito " + fav : ""),
+    helloTitle: "Hola — esto es ccstats.",
+    helloSub: "Una imagen de cómo usas Claude Code en realidad, hecha con las transcripciones que ya están en esta máquina.",
+    helloItems: [
+      ["mouse", "<b>Pasa el ratón por encima de todo.</b> Los días del mapa de calor, las barras, las horas y cada número abreviado llevan la cifra exacta."],
+      ["clipboard", "<b>Clic derecho</b> para copiar: obtienes justo aquello sobre lo que hiciste clic — un día, una hora, un modelo o todo el periodo."],
+      ["keyboard", "Los periodos son <b>Todo / 30d / 7d</b>, las pestañas separan totales y gasto por modelo, y la tarjeta de <b>Hoy</b> se abre para comparar con ayer."],
+      ["sliders", "Pon un <b>ccstats.config.json</b> junto al script para fijar tus precios, nombres de modelo, color de acento o moneda. Usa <b>--init-config</b> para empezar."],
+      ["sparkles", "Hay algunas cosas escondidas aquí. Prueba el código Konami."],
+    ],
+    helloPrivacy:
+      "<b>Esto nunca sale de tu máquina.</b> Solo lee metadatos de uso: marcas de tiempo, nombres de modelo, recuentos de tokens y un id de sesión con hash. " +
+      "No tus mensajes, ni tus prompts, ni los nombres de tus archivos o proyectos. La página no hace peticiones de red y una CSP lo impone.",
+    helloHint: "Clic derecho en cualquier sitio para volver a verlo",
+    helloDontShow: "No volver a mostrar",
+    helloGo: "Vamos",
+    priceWarn: (names) =>
+      "<b>" + names + "</b> no está en la tabla de precios, así que su coste es una estimación aproximada. Define su tarifa en ccstats.config.json para corregirlo.",
+    noDataTitle: "Aún no hay uso registrado.",
+    noDataBody: "ccstats leyó tu carpeta de transcripciones de Claude Code pero no encontró nada que representar. O todavía no has usado Claude Code en esta máquina, o las transcripciones están en otro sitio. Si es lo segundo:",
+    noDataFoot: "Ejecuta node ccstats.mjs --help para el resto de opciones.",
+    irlReroll: "Cambiar por otras tres cosas",
+    irlTitle: (usd) => "En la vida real, " + usd + " es…",
+    irlLine: (amount, name) => "≈ <b>" + amount + "</b> " + name,
+    irlAmount: (n) =>
+      n >= 10 ? Math.round(n).toLocaleString() : n >= 1 ? n.toFixed(1) : (n * 100).toFixed(1) + "% de un",
+    sry: "perdón anthropic",
+    partyTitle: "ccstats — modo fiesta",
+  },
 };
 
 // Precedence: what you last picked in the page > what the config file suggests > your browser.
 // The config sets a starting point, it never overrides a choice you already made here.
 const savedLang = localStorage.getItem("ccstats-lang");
 const cfgLang = DATA.config && DATA.config.lang;
+// Match the browser on the primary subtag only: "pt-BR", "zh-Hans-CN" and "de-AT" should all
+// land somewhere sensible rather than falling through to English because the region differs.
+function detectLang() {
+  for (const tag of navigator.languages || [navigator.language || "en"]) {
+    const base = String(tag).toLowerCase().split("-")[0];
+    if (LANGS[base]) return base;
+  }
+  return "en";
+}
 let lang =
-  savedLang === "ko" || savedLang === "en"
-    ? savedLang
-    : cfgLang === "ko" || cfgLang === "en"
-      ? cfgLang
-      : (navigator.language || "en").toLowerCase().indexOf("ko") === 0 ? "ko" : "en";
+  savedLang && LANGS[savedLang] ? savedLang
+    : cfgLang && LANGS[cfgLang] ? cfgLang
+      : detectLang();
 
 function T(k, ...a) {
   let v = LANGS[lang][k];
@@ -2693,12 +3166,64 @@ themeInput.addEventListener("change", () => {
 // resolved here so a language change never has to rebuild the top bar by hand.
 function applyStatic() {
   document.documentElement.lang = lang;
+  paintLangPicks();
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = T(el.dataset.i18n); });
   document.querySelectorAll("[data-tip-key]").forEach((el) => { el.dataset.tip = T(el.dataset.tipKey); });
   document.querySelectorAll("[data-range]").forEach((b) => { b.dataset.tip = T("tipRange", b.dataset.range); });
   document.querySelectorAll("[data-lang]").forEach((b) => b.classList.toggle("on", b.dataset.lang === lang));
   if (document.body.classList.contains("party")) document.title = T("partyTitle");
 }
+// Every language but English is marked beta and says so where you pick it. They were written in
+// one pass and have not been reviewed by native speakers; the numbers and the layout are the
+// same in every one, but the wording may read stiffly. English is the reference: T() falls back
+// to it key by key, so a gap in a translation shows English rather than "undefined".
+const LANG_META = [
+  { code: "en", short: "EN", name: "English" },
+  { code: "ko", short: "한", name: "한국어", beta: true },
+  { code: "ja", short: "日", name: "日本語", beta: true },
+  { code: "zh", short: "中", name: "简体中文", beta: true },
+  { code: "es", short: "ES", name: "Español", beta: true },
+];
+const langMeta = (c) => LANG_META.find((m) => m.code === c) || LANG_META[0];
+
+function paintLangPicks() {
+  const cur = langMeta(lang);
+  document.querySelectorAll(".langpick").forEach((host) => {
+    host.innerHTML =
+      '<button type="button" class="langbtn" aria-haspopup="listbox" aria-expanded="false">' +
+      icon("globe") + "<span>" + cur.short + "</span>" +
+      '<svg class="icon chev" viewBox="0 0 24 24">' + ICONS.chevron + "</svg></button>" +
+      '<ul class="langlist" role="listbox">' +
+      LANG_META.filter((m) => LANGS[m.code]).map((m) =>
+        '<li><button type="button" class="langopt' + (m.code === lang ? " on" : "") +
+        '" role="option" aria-selected="' + (m.code === lang) + '" data-lang="' + m.code + '">' +
+        '<span class="lname">' + m.name + "</span>" +
+        (m.beta ? '<span class="lbeta">' + T("langBeta") + "</span>" : "") +
+        '<svg class="icon lcheck" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>' +
+        "</button></li>"
+      ).join("") +
+      '<li class="langnote">' + T("langBetaNote") + "</li></ul>";
+  });
+}
+
+// open/close, selection, and dismissal all delegate from the document so the two pickers (top
+// bar and welcome dialog) share one set of handlers and can be re-rendered freely
+document.addEventListener("click", (e) => {
+  const opt = e.target.closest(".langopt");
+  if (opt) { setLang(opt.dataset.lang); document.querySelectorAll(".langpick").forEach((p) => p.classList.remove("open")); return; }
+  const btn = e.target.closest(".langbtn");
+  const host = btn && btn.closest(".langpick");
+  document.querySelectorAll(".langpick").forEach((p) => {
+    const wants = p === host ? !p.classList.contains("open") : false;
+    p.classList.toggle("open", wants);
+    const b = p.querySelector(".langbtn");
+    if (b) b.setAttribute("aria-expanded", wants ? "true" : "false");
+  });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") document.querySelectorAll(".langpick.open").forEach((p) => p.classList.remove("open"));
+});
+
 function setLang(next) {
   if (next === lang || !LANGS[next]) return;
   lang = next;
@@ -2708,9 +3233,7 @@ function setLang(next) {
   // the welcome dialog is outside .wrap, so render() does not reach it
   if (helloEl && !helloEl.hidden) paintHello();
 }
-document.querySelectorAll("[data-lang]").forEach((b) =>
-  b.addEventListener("click", () => setLang(b.dataset.lang))
-);
+// (the picker's options are rendered after parse, so selection is delegated — see above)
 
 // Restarting only the pane's own .pane-in animation leaves everything inside it alone, and a
 // pane that has NEVER been on screen keeps its entrance animations ticking while display:none —
@@ -2955,7 +3478,7 @@ function paintHello() {
     .map(([ic, html]) => "<li>" + icon(ic) + "<span>" + html + "</span></li>").join("");
   document.getElementById("helloPrivacy").innerHTML = T("helloPrivacy");
   helloEl.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = T(el.dataset.i18n); });
-  helloEl.querySelectorAll("[data-lang]").forEach((b) => b.classList.toggle("on", b.dataset.lang === lang));
+  paintLangPicks();
 }
 function showHello() {
   paintHello();
