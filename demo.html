@@ -118,7 +118,21 @@
           "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
     display: flex; justify-content: center; padding: 44px 20px;
   }
-  .wrap { width: 100%; max-width: 800px; }
+  .wrap { width: 100%; max-width: 800px; transition: max-width .28s cubic-bezier(.22,1,.36,1); }
+  /* Fullscreen widens the column. An 800px measure centred on a 27" display is a fullscreen
+     that changed nothing except the window chrome; the point of the mode is the extra room.
+     Capped rather than fluid so the heatmap and cards do not stretch into absurd cells. */
+  body.fs .wrap { max-width: 1180px; }
+  .fsbtn {
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 38px; height: 38px; cursor: pointer;
+    color: var(--muted); background: var(--card); border: 0; border-radius: 10px;
+    transition: color .15s, background-color .15s, transform .15s cubic-bezier(.34,1.56,.64,1);
+  }
+  .fsbtn:hover, .fsbtn:focus-visible { color: var(--text); background: var(--chip); }
+  .fsbtn:active { transform: scale(.9); }
+  .fsbtn .icon { width: 17px; height: 17px; vertical-align: 0; }
+  .fsbtn[hidden] { display: none; }
   .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
   .tabs, .ranges { display: flex; gap: 4px; background: var(--card); border-radius: 10px; padding: 4px; }
   .tabs button, .ranges button {
@@ -1208,6 +1222,9 @@
         <button data-range="7" data-i18n="r7">7d</button>
       </div>
       <div class="langpick" id="langpick" data-tip-key="tipLang"></div>
+      <!-- hidden outright where the Fullscreen API is unavailable (iOS Safari), rather than
+           offering a control that silently does nothing -->
+      <button type="button" class="fsbtn" id="fsbtn" hidden data-tip-key="tipFullscreen"></button>
       <!-- From Uiverse.io by RiccardoRapelli -->
       <label class="switch" data-tip-key="tipTheme">
         <input id="themeInput" type="checkbox" />
@@ -1368,6 +1385,9 @@ const LANGS = {
     ctxHello: "What is this?",
     langBeta: "beta",
     langBetaNote: "Everything but English was written in one pass and has not been reviewed by a native speaker.",
+    tipFullscreen: "Fill the screen. Esc or F11 leaves.",
+    fsEnter: "Enter fullscreen", fsExit: "Leave fullscreen",
+    fsBlocked: "Fullscreen was refused by the browser",
     ctxRedact: "Hide the numbers", ctxUnredact: "Show the numbers",
     redactOn: "Numbers hidden — safe to screenshot", redactOff: "Numbers visible again",
     helloTitle: "Hey — this is ccstats.",
@@ -1525,6 +1545,9 @@ const LANGS = {
     ctxHello: "이게 뭔가요?",
     langBeta: "베타",
     langBetaNote: "영어 외의 언어는 한 번에 작성되었으며 원어민 검수를 거치지 않았습니다.",
+    tipFullscreen: "화면을 가득 채웁니다. Esc나 F11로 빠져나옵니다.",
+    fsEnter: "전체 화면", fsExit: "전체 화면 끝내기",
+    fsBlocked: "브라우저가 전체 화면을 거부했습니다",
     ctxRedact: "숫자 가리기", ctxUnredact: "숫자 보이기",
     redactOn: "숫자를 가렸습니다 — 캡처해도 안전해요", redactOff: "숫자를 다시 표시합니다",
     helloTitle: "안녕하세요 — ccstats입니다.",
@@ -1671,6 +1694,9 @@ const LANGS = {
     ctxHello: "これは何ですか？",
     langBeta: "ベータ",
     langBetaNote: "英語以外は一括で作成されており、ネイティブによる確認を経ていません。",
+    tipFullscreen: "画面いっぱいに表示します。EscまたはF11で戻ります。",
+    fsEnter: "全画面表示", fsExit: "全画面を終了",
+    fsBlocked: "ブラウザが全画面表示を拒否しました",
     ctxRedact: "数値を隠す", ctxUnredact: "数値を表示",
     redactOn: "数値を隠しました — スクリーンショットでも安全です", redactOff: "数値を再表示しました",
     ctxCopyOf: (what) => what + "をコピー",
@@ -1811,6 +1837,9 @@ const LANGS = {
     ctxHello: "这是什么？",
     langBeta: "测试版",
     langBetaNote: "英语以外的语言为一次性生成，未经母语者校对。",
+    tipFullscreen: "铺满整个屏幕。按 Esc 或 F11 退出。",
+    fsEnter: "进入全屏", fsExit: "退出全屏",
+    fsBlocked: "浏览器拒绝了全屏请求",
     ctxRedact: "隐藏数字", ctxUnredact: "显示数字",
     redactOn: "数字已隐藏 — 可以放心截图", redactOff: "数字已重新显示",
     ctxCopyOf: (what) => "复制" + what,
@@ -1951,6 +1980,9 @@ const LANGS = {
     ctxHello: "¿Qué es esto?",
     langBeta: "beta",
     langBetaNote: "Todo lo que no sea inglés se escribió de una vez y no lo ha revisado un hablante nativo.",
+    tipFullscreen: "Ocupa toda la pantalla. Esc o F11 para salir.",
+    fsEnter: "Pantalla completa", fsExit: "Salir de pantalla completa",
+    fsBlocked: "El navegador rechazó la pantalla completa",
     ctxRedact: "Ocultar los números", ctxUnredact: "Mostrar los números",
     redactOn: "Números ocultos — seguro para capturas", redactOff: "Números visibles de nuevo",
     ctxCopyOf: (what) => "Copiar " + what,
@@ -2155,6 +2187,8 @@ const ICONS = {
   mouse: '<rect x="6" y="2" width="12" height="20" rx="6"/><path d="M12 7v3"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   sliders: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+  expand: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  shrink: '<path d="M3 8h3a2 2 0 0 0 2-2V3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
   eyeoff: '<path d="M10.7 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.9 17.9 0 0 1-3 3.9"/><path d="M6.2 6.2A17.7 17.7 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 4.5-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M2 2l20 20"/>',
   pie: '<circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/>',
@@ -3136,6 +3170,45 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// --- fullscreen ---
+// State is read back from the document rather than tracked in a variable: fullscreen can end
+// without going through this button — Esc, F11, the window manager — and a local flag would
+// drift out of step with reality the first time it did.
+const fsBtn = document.getElementById("fsbtn");
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+const fsSupported = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+
+function paintFs() {
+  const on = !!fsEl();
+  document.body.classList.toggle("fs", on);
+  fsBtn.innerHTML = icon(on ? "shrink" : "expand");
+  fsBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  fsBtn.setAttribute("aria-label", T(on ? "fsExit" : "fsEnter"));
+  fsBtn.dataset.tip = T("tipFullscreen");
+}
+
+async function toggleFs() {
+  try {
+    if (fsEl()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else {
+      const el = document.documentElement;
+      await (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+    }
+  } catch {
+    // Browsers reject this outside a user gesture, and some refuse it entirely under policy.
+    // Nothing is broken and nothing is lost, so say so once rather than failing silently.
+    toast(T("fsBlocked"));
+  }
+}
+
+if (fsSupported) {
+  fsBtn.hidden = false;
+  paintFs();
+  fsBtn.addEventListener("click", toggleFs);
+  document.addEventListener("fullscreenchange", paintFs);
+  document.addEventListener("webkitfullscreenchange", paintFs);
+}
+
 // --- theme toggle (day/night switch) ---
 const themeInput = document.getElementById("themeInput");
 const applyTheme = (t) => {
@@ -3170,6 +3243,7 @@ function applyStatic() {
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = T(el.dataset.i18n); });
   document.querySelectorAll("[data-tip-key]").forEach((el) => { el.dataset.tip = T(el.dataset.tipKey); });
   document.querySelectorAll("[data-range]").forEach((b) => { b.dataset.tip = T("tipRange", b.dataset.range); });
+  if (fsBtn && !fsBtn.hidden) paintFs(); // aria-label and tooltip follow the language
   document.querySelectorAll("[data-lang]").forEach((b) => b.classList.toggle("on", b.dataset.lang === lang));
   if (document.body.classList.contains("party")) document.title = T("partyTitle");
 }
