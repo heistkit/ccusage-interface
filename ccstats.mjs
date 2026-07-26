@@ -488,18 +488,26 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   .today .tcmpwrap { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s ease; }
   .today.cmp-open .tcmpwrap { grid-template-rows: 1fr; }
   .today .tcmpwrap > .tcmp { min-height: 0; overflow: hidden; }
+  /* One grid for the whole table, rows as display:contents. Each row used to be its own grid
+     with min-width:62px value cells and a fixed 62px delta track — 222px of floor before the
+     label got anything, so on a narrow screen the row outgrew the card and the delta column,
+     the most informative one, was clipped away by .today's overflow:hidden. Columns also only
+     *appeared* aligned across rows; sharing one grid makes that real. */
+  .today .tcmp {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto;
+    column-gap: 10px; align-items: baseline;
+  }
   .today .tcmphead {
+    grid-column: 1 / -1;
     margin-top: 10px; font-size: 13px; color: var(--muted);
     display: flex; justify-content: space-between; gap: 10px;
   }
-  .today .tcmprow {
-    display: grid; grid-template-columns: 1fr auto auto 62px; gap: 12px;
-    align-items: baseline; font-size: 14px; padding: 5px 0;
-  }
-  .today .tcmprow + .tcmprow { border-top: 1px solid var(--border); }
-  .today .tcmpcols { font-size: 12px; color: var(--muted); padding-bottom: 2px; }
-  .today .tcmpk { color: var(--muted); }
-  .today .tcmpa, .today .tcmpb { font-variant-numeric: tabular-nums; min-width: 62px; text-align: right; }
+  .today .tcmprow { display: contents; }
+  .today .tcmprow > * { padding: 5px 0; font-size: 14px; }
+  .today .tcmprow + .tcmprow > * { border-top: 1px solid var(--border); }
+  .today .tcmpcols > * { font-size: 12px; color: var(--muted); padding-bottom: 2px; }
+  .today .tcmpk { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .today .tcmpa, .today .tcmpb { font-variant-numeric: tabular-nums; text-align: right; }
   .today .tcmpa { font-weight: 650; }
   .today .tcmpb { color: var(--muted); }
   .today .tcmpd { font-variant-numeric: tabular-nums; text-align: right; font-weight: 650; font-size: 13px; }
@@ -566,9 +574,11 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   .finner { display: block; }
   .fline { display: block; height: 1.55em; color: var(--accent); font-weight: 600; white-space: nowrap; }
   /* party mode is a background change only. It used to run a 3s infinite hue-rotate animation on
-     <body>, which hue-rotates every descendant — the accent, the text, the chart bars — so the
-     numbers became unreadable and the whole point of the page went away for as long as it was on.
-     The rain (#rain, below) is the effect; nothing in the content shifts colour. */
+     the body element, which hue-rotates every descendant — the accent, the text, the chart bars —
+     so the numbers became unreadable and the whole point of the page went away for as long as it
+     was on. The rain (#rain, below) is the effect; nothing in the content shifts colour.
+     Note: no literal HTML tags in comments here. The generated page is a single file that tools
+     do string surgery on, and a stray tag name in CSS is the first match they hit. */
   /* copy confirmation. Deliberately quiet: no icon, no colour, and it never moves layout. */
   .toast {
     position: fixed; left: 50%; bottom: 26px; z-index: 120; pointer-events: none;
@@ -970,7 +980,64 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   .wcard .mcost2 { margin: 0; font-weight: 700; font-size: 15px; color: var(--muted); }
   .wcard .wfoot { margin-top: 15px; opacity: 0; }
   .wcard .cash-title { margin: 0; font-weight: 700; color: var(--muted); font-size: 14px; }
+  .wcard .fhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .wcard .dtoggle {
+    display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    color: var(--muted); background: none; border: 2px solid var(--chip);
+    border-radius: 20px; padding: 4px 11px;
+    transition: color .16s ease, background-color .16s ease, border-radius .18s ease;
+  }
+  .wcard .dtoggle:hover, .wcard .dtoggle:focus-visible {
+    color: var(--text); background: var(--chip); border-radius: 6px;
+  }
+  .wcard .dtoggle .icon { width: 14px; height: 14px; vertical-align: 0; }
   .wcard .blocks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; text-align: center; font-weight: 600; }
+  .wcard .blocks.ischart { display: block; }
+
+  /* --- donut view of the same three numbers --- */
+  .donut { display: flex; align-items: center; gap: 20px; margin-top: 10px; }
+  .dchart { position: relative; width: 128px; height: 128px; flex-shrink: 0; }
+  .dchart svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+  .dtrack { fill: none; stroke: var(--cell); stroke-width: 14; }
+  .dseg {
+    fill: none; stroke-width: 14; stroke-linecap: butt; cursor: pointer;
+    transition: opacity .18s ease, stroke-width .18s ease;
+    animation: dgrow .7s cubic-bezier(.22,1,.36,1) backwards; animation-delay: var(--d, 0ms);
+  }
+  .dseg.di { stroke: var(--b2); }
+  .dseg.do { stroke: var(--b3); }
+  .dseg.dc { stroke: var(--accent); }
+  .dseg.dim { opacity: .28; }
+  .dseg:hover { stroke-width: 18; }
+  @keyframes dgrow { from { stroke-dasharray: 0 9999; } }
+  .dcenter {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1px; pointer-events: none; text-align: center;
+  }
+  .dcenter b { font-size: 21px; font-weight: 800; letter-spacing: -0.02em; }
+  .dcenter span { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .dlegend { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+  .dleg {
+    display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; gap: 9px;
+    align-items: center; width: 100%; text-align: left;
+    font: inherit; font-size: 14px; cursor: pointer;
+    background: none; border: 0; border-radius: 8px; padding: 5px 8px; margin: 0 -8px;
+    transition: background-color .16s ease;
+  }
+  .dleg:hover, .dleg:focus-visible, .dleg.on { background: var(--chip); }
+  .ddot { width: 10px; height: 10px; border-radius: 3px; }
+  .ddot.di { background: var(--b2); }
+  .ddot.do { background: var(--b3); }
+  .ddot.dc { background: var(--accent); }
+  .dlabel { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dpct { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .dval { font-weight: 650; font-variant-numeric: tabular-nums; }
+  /* the chart is 128px wide before the legend gets anything — below this the two stack */
+  @media (max-width: 520px) {
+    .donut { flex-direction: column; align-items: stretch; gap: 12px; }
+    .dchart { align-self: center; }
+  }
   .wcard .block { padding: 8px 10px; border-radius: 8px; border: 2px solid var(--chip); transition: background-color .2s, transform .2s, border-radius .18s ease; }
   .wcard .block:hover { background-color: var(--chip); transform: translateY(-2px); border-radius: 3px; }
   .wcard .block b { display: block; font-size: 17px; }
@@ -1353,6 +1420,8 @@ const LANGS = {
     busiest: (h) => "busiest at " + h,
     todayEmpty: "Nothing yet — the grid awaits.",
     noteQuiet: "Yesterday was quiet. Today, not so much.",
+    noteBothQuiet: "Nothing billed today — or yesterday.",
+    bookNone: "No billable tokens yet — this fills in once you've used a model.",
     noteHot: (x) => " Burning " + x + "× more than yesterday.",
     noteCalm: (p) => " A calmer day — " + p + "% less than yesterday.",
     liveNone: "no activity yet",
@@ -1394,6 +1463,9 @@ const LANGS = {
     wTokensOf: (m) => "Tokens · " + m,
     wInput: "input", wOutput: "output", wCache: "cache",
     wBreakdown: "Breakdown",
+    wViewDonut: "Chart", wViewBars: "Bars",
+    wViewTip: "Switch between the bar breakdown and a donut chart of the same three numbers.",
+    wDonutAlt: "Share of tokens by input, output and cache",
     tipBalance: "Dollars and cents of the estimate for this range.",
     emptyRange: "No data in this range",
     ctxCopy: "Copy summary", ctxExport: "Export JSON", ctxTheme: "Toggle theme",
@@ -1492,6 +1564,8 @@ const LANGS = {
     busiest: (h) => h + "에 가장 바빴어요",
     todayEmpty: "아직 아무것도 없어요 — 잔디가 기다리는 중.",
     noteQuiet: "어제는 조용했죠. 오늘은 좀 다르네요.",
+    noteBothQuiet: "오늘도 어제도 청구된 내역이 없습니다.",
+    bookNone: "아직 청구된 토큰이 없어요 — 모델을 쓰기 시작하면 채워집니다.",
     noteHot: (x) => " 어제보다 " + x + "배 더 태우는 중.",
     noteCalm: (p) => " 차분한 하루 — 어제보다 " + p + "% 적어요.",
     liveNone: "아직 활동 없음",
@@ -1541,6 +1615,9 @@ const LANGS = {
     wTokensOf: (m) => "토큰 · " + m,
     wInput: "입력", wOutput: "출력", wCache: "캐시",
     wBreakdown: "상세",
+    wViewDonut: "차트", wViewBars: "막대",
+    wViewTip: "같은 세 숫자를 막대 분해와 도넛 차트로 번갈아 봅니다.",
+    wDonutAlt: "입력·출력·캐시 토큰 비율",
     tipBalance: "이 기간 추정치의 달러와 센트입니다.",
     emptyRange: "이 기간에는 데이터가 없습니다",
     ctxCopy: "요약 복사", ctxExport: "JSON 내보내기", ctxTheme: "테마 전환",
@@ -1696,10 +1773,19 @@ function mCost(model, v) {
 // to be a live FX rate, and the tooltips still say "estimate".
 const CUR = (DATA.config && DATA.config.currency) || { symbol: "$", rate: 1 };
 const cvt = (n) => n * (CUR.rate || 1);
-const fmtUsd = (n) =>
-  cvt(n) >= 100 ? CUR.symbol + Math.round(cvt(n)).toLocaleString() : CUR.symbol + cvt(n).toFixed(2);
-const fmtUsdCents = (n) =>
-  CUR.symbol + cvt(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtUsd = (n) => {
+  const v = cvt(n);
+  if (v > 0 && v < 0.005) return "<" + CUR.symbol + "0.01";
+  return v >= 100 ? CUR.symbol + Math.round(v).toLocaleString() : CUR.symbol + v.toFixed(2);
+};
+// A light user's whole history can be a fraction of a cent, and rounding every figure on the
+// page to "$0.00" makes real usage look like no usage. Anything above zero but below a cent
+// says so instead of claiming to be nothing.
+const fmtUsdCents = (n) => {
+  const v = cvt(n);
+  if (v > 0 && v < 0.005) return "<" + CUR.symbol + "0.01";
+  return CUR.symbol + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 // abbreviated number with the exact value in a hover tooltip
 const exb = (n, unit) =>
   '<b data-exact="' + n.toLocaleString() + " " + (unit || T("unitTokens")) + '">' + fmt(n) + "</b>";
@@ -1732,6 +1818,8 @@ const ICONS = {
   mouse: '<rect x="6" y="2" width="12" height="20" rx="6"/><path d="M12 7v3"/>',
   keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
   sliders: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+  pie: '<circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/>',
+  bars: '<rect x="3" y="10" width="5" height="11" rx="1"/><rect x="10" y="4" width="5" height="17" rx="1"/><rect x="17" y="14" width="5" height="7" rx="1"/>',
 };
 const icon = (n) => '<svg class="icon" viewBox="0 0 24 24">' + ICONS[n] + "</svg>";
 
@@ -1969,7 +2057,11 @@ function renderToday() {
   const yk = shiftDay(tk, -1);
   const yCost = DATA.days[yk] ? dayCost(yk) : 0;
   let note;
-  if (!yCost) note = T("noteQuiet");
+  // "Yesterday was quiet, today not so much" only holds if today is actually loud. With both
+  // days at zero — a real state for anyone whose messages carried no billable usage — it read
+  // as a boast about nothing.
+  if (!yCost && !cost) note = icon("sprout") + T("noteBothQuiet");
+  else if (!yCost) note = T("noteQuiet");
   else if (cost > yCost) note = icon("flame") + T("noteHot", (cost / yCost).toFixed(1));
   else note = icon("leaf") + T("noteCalm", Math.round((1 - cost / yCost) * 100));
   el.innerHTML =
@@ -1987,8 +2079,11 @@ function renderToday() {
     "</div>" +
     '<div class="tsplit">' + splitChip("i", T("brInput")) + splitChip("o", T("brOutput")) +
     splitChip("cw", T("brCacheWrite")) + splitChip("cr", T("brCacheRead")) + "</div>" +
+    // with nothing billed, reduce() keeps its seed and confidently named midnight as the
+    // priciest hour of a day that cost nothing
     '<div class="tsec"><span>' + T("todayHourly") + "</span><span>" + T("todayPeakHour") +
-    " <i>" + T("hour", hrs.reduce((b, x, i) => (x.cost > hrs[b].cost ? i : b), 0)) + "</i></span></div>" +
+    " <i>" + (peakCost ? T("hour", hrs.reduce((b, x, i) => (x.cost > hrs[b].cost ? i : b), 0)) : "—") +
+    "</i></span></div>" +
     '<div class="thbars">' + hourBars + "</div>" +
     // one column per labelled hour (column N == hour N-1); the text is allowed to overflow its
     // 1/24 column so it can stay centred on the exact bar it names
@@ -2026,7 +2121,9 @@ function compareHTML(tk) {
   };
   const A = stat(tk), B = stat(yk);
   const delta = (x, y) => {
-    if (!y) return '<span class="tcmpd flat">' + T("cmpNew") + "</span>";
+    // 0 -> 0 is not "new", it is nothing happening. Only call it new if today actually has
+    // something yesterday didn't; otherwise a day with no billed hours reported four "new"s.
+    if (!y) return '<span class="tcmpd flat">' + T(x ? "cmpNew" : "cmpFlat") + "</span>";
     const p = ((x - y) / y) * 100;
     if (Math.abs(p) < 0.5) return '<span class="tcmpd flat">' + T("cmpFlat") + "</span>";
     const cls = p > 0 ? "up" : "down";
@@ -2163,12 +2260,73 @@ const wblock = (n, total, label) =>
   '<i class="pbar" style="--p:' + (total ? (n / total) * 100 : 0) + "%;--pmin:" +
   (n > 0 ? "2px" : "0px") + '"></i></div>';
 
+const walletParts = (v) => [
+  { key: "i", label: T("wInput"), n: v.i },
+  { key: "o", label: T("wOutput"), n: v.o },
+  { key: "c", label: T("wCache"), n: v.cw + (v.c1h || 0) + v.cr },
+];
+
 const walletBlocks = (v) => {
   const total = mTok(v);
-  return wblock(v.i, total, T("wInput")) +
-    wblock(v.o, total, T("wOutput")) +
-    wblock(v.cw + (v.c1h || 0) + v.cr, total, T("wCache"));
+  return walletParts(v).map((p) => wblock(p.n, total, p.label)).join("");
 };
+
+// Donut view of the same three numbers. Arcs are drawn with stroke-dasharray on concentric
+// circles rather than <path> arcs — one number per segment, no trig, and no large-arc-flag
+// discontinuity when a slice crosses 180deg.
+//
+// The geometry stays strictly proportional. With a typical cache share above 99% the other two
+// slices are a fraction of a degree, so they render as a hairline: MIN_ARC keeps a nonzero
+// segment from vanishing entirely, exactly like --pmin does on the bars, and the legend carries
+// the real percentages. Deliberately NOT inflating small slices to a "readable" minimum angle —
+// that would misstate the very ratio the chart exists to show. Every segment is hoverable from
+// the legend too, so a hairline arc is still inspectable.
+const DONUT_R = 52, DONUT_C = 2 * Math.PI * DONUT_R, MIN_ARC = 2;
+
+function walletDonut(v) {
+  const total = mTok(v);
+  const parts = walletParts(v);
+  let offset = 0;
+  const arcs = parts.map((p, i) => {
+    const frac = total ? p.n / total : 0;
+    const len = p.n > 0 ? Math.max(MIN_ARC, frac * DONUT_C) : 0;
+    const seg =
+      '<circle class="dseg d' + p.key + '" data-seg="' + i + '" r="' + DONUT_R + '" cx="60" cy="60"' +
+      ' stroke-dasharray="' + len.toFixed(3) + " " + (DONUT_C - len).toFixed(3) + '"' +
+      ' stroke-dashoffset="' + (-offset).toFixed(3) + '"' +
+      ' style="--d:' + (i * 120) + 'ms"></circle>';
+    offset += frac * DONUT_C;
+    return seg;
+  }).join("");
+
+  const legend = parts.map((p, i) =>
+    '<button type="button" class="dleg" data-seg="' + i + '">' +
+    '<span class="ddot d' + p.key + '"></span>' +
+    '<span class="dlabel">' + p.label + "</span>" +
+    '<span class="dpct">' + pctStr(p.n, total) + "</span>" +
+    '<span class="dval">' + fmt(p.n) + "</span></button>"
+  ).join("");
+
+  return (
+    '<div class="donut">' +
+    '<div class="dchart">' +
+    '<svg viewBox="0 0 120 120" role="img" aria-label="' + attr(T("wDonutAlt")) + '">' +
+    '<circle class="dtrack" r="' + DONUT_R + '" cx="60" cy="60"></circle>' + arcs +
+    "</svg>" +
+    // the default (total) reading is stashed on the node so restoring it after a hover does not
+    // have to re-derive anything
+    '<div class="dcenter" data-total="' +
+    attr("<b>" + fmt(total) + "</b><span>" + T("unitTokens") + "</span>") + '">' +
+    "<b>" + fmt(total) + "</b><span>" + T("unitTokens") + "</span></div>" +
+    "</div>" +
+    '<div class="dlegend">' + legend + "</div>" +
+    "</div>"
+  );
+}
+
+// which view the wallet footer is showing; remembered like the collapse state
+let walletChart = localStorage.getItem("ccstats-wallet-chart") === "1";
+const walletFooter = (v) => (walletChart ? walletDonut(v) : walletBlocks(v));
 
 function walletHTML(a) {
   const rows = topModels(a);
@@ -2204,8 +2362,13 @@ function walletHTML(a) {
     '<div class="wbody">' +
     '<div class="bhead"><p class="btitle">' + T("wTopModels") + '</p><span class="bcount">' + T("wModelCount", rows.length) + "</span></div>" +
     '<div class="bank-cards" style="--wn:' + top.length + '">' + bank + "</div>" +
-    '<footer class="wfoot"><p class="cash-title">' + T("wTokensOf", pretty(top[walletSel][0])) + "</p>" +
-    '<div class="blocks" id="wblocks">' + walletBlocks(top[walletSel][1]) + "</div></footer>" +
+    '<footer class="wfoot"><div class="fhead">' +
+    '<p class="cash-title">' + T("wTokensOf", pretty(top[walletSel][0])) + "</p>" +
+    '<button type="button" class="dtoggle" id="dtoggle" aria-pressed="' + (walletChart ? "true" : "false") +
+    '" data-tip="' + attr(T("wViewTip")) + '">' + icon(walletChart ? "bars" : "pie") +
+    '<span>' + T(walletChart ? "wViewBars" : "wViewDonut") + "</span></button></div>" +
+    '<div class="blocks' + (walletChart ? " ischart" : "") + '" id="wblocks">' +
+    walletFooter(top[walletSel][1]) + "</div></footer>" +
     "</div>" +
     '<label for="wtoggle" class="expandbtn">' +
     '<span class="ebg"><span class="ebg-layers"><span class="ebg-layer l1"></span><span class="ebg-layer l2"></span><span class="ebg-layer l3"></span></span></span>' +
@@ -2215,17 +2378,85 @@ function walletHTML(a) {
   );
 }
 
+// the selected model's numbers, whichever of the two views is showing
+function paintWalletFooter() {
+  const top = topModels(aggregate(keysInRange()));
+  if (!top[walletSel]) return;
+  const host = document.getElementById("wblocks");
+  host.classList.toggle("ischart", walletChart);
+  host.innerHTML = walletFooter(top[walletSel][1]);
+  document.querySelector(".wfoot .cash-title").textContent = T("wTokensOf", pretty(top[walletSel][0]));
+}
+
 document.getElementById("modelsPane").addEventListener("change", (e) => {
   if (e.target.classList.contains("wtoggle")) {
     walletCollapsed = e.target.checked;
     localStorage.setItem("ccstats-wallet-collapsed", walletCollapsed ? "1" : "0");
   } else if (e.target.classList.contains("wradio")) {
     walletSel = +e.target.dataset.idx;
-    const top = topModels(aggregate(keysInRange()));
-    if (!top[walletSel]) return;
-    document.getElementById("wblocks").innerHTML = walletBlocks(top[walletSel][1]);
-    document.querySelector(".wfoot .cash-title").textContent = T("wTokensOf", pretty(top[walletSel][0]));
+    paintWalletFooter();
   }
+});
+
+document.getElementById("modelsPane").addEventListener("click", (e) => {
+  const swap = e.target.closest("#dtoggle");
+  if (swap) {
+    walletChart = !walletChart;
+    localStorage.setItem("ccstats-wallet-chart", walletChart ? "1" : "0");
+    swap.setAttribute("aria-pressed", walletChart ? "true" : "false");
+    swap.innerHTML = icon(walletChart ? "bars" : "pie") +
+      "<span>" + T(walletChart ? "wViewBars" : "wViewDonut") + "</span>";
+    paintWalletFooter();
+    return;
+  }
+  // legend rows are the hit target for slices too thin to hover — with a 99% cache share the
+  // other two arcs are a hairline, and a segment you cannot point at cannot be inspected
+  const leg = e.target.closest(".dleg");
+  if (leg) {
+    const donut = leg.closest(".donut"), idx = +leg.dataset.seg;
+    // clicking the pinned row again releases it, so there is always a way back to the total
+    if (donut.dataset.pinned === String(idx)) focusSegment(donut, -1, false);
+    else focusSegment(donut, idx, true);
+  }
+});
+
+// hover/focus a slice or a legend row -> centre reads that segment instead of the total
+function focusSegment(donut, idx, sticky) {
+  if (!donut) return;
+  const segs = [...donut.querySelectorAll(".dseg")];
+  const legs = [...donut.querySelectorAll(".dleg")];
+  const on = idx !== null && idx >= 0;
+  // Pin bookkeeping happens BEFORE the clear-to-total path returns. It used to sit after, so
+  // unpinning restored the total but left dataset.pinned set — and every later hover was then
+  // ignored as "pinned", which killed the interaction for the rest of the session.
+  if (sticky && on) donut.dataset.pinned = idx; else delete donut.dataset.pinned;
+  donut.classList.toggle("focused", on);
+  segs.forEach((s, i) => s.classList.toggle("dim", on && i !== idx));
+  legs.forEach((l, i) => l.classList.toggle("on", on && i === idx));
+  const centre = donut.querySelector(".dcenter");
+  if (!on) { centre.innerHTML = centre.dataset.total; return; }
+  const leg = legs[idx];
+  centre.innerHTML = "<b>" + leg.querySelector(".dval").textContent + "</b><span>" +
+    leg.querySelector(".dlabel").textContent + "</span>";
+}
+
+// One handler for the whole pane, so moving the pointer OFF the donut — to anywhere else in the
+// card, not just past its edge — releases the reading. Scoping this to the donut alone left the
+// centre stuck on whichever slice was touched last.
+document.getElementById("modelsPane").addEventListener("mouseover", (e) => {
+  const hit = e.target.closest(".dseg, .dleg");
+  const donut = hit ? hit.closest(".donut") : null;
+  document.querySelectorAll("#modelsPane .donut").forEach((d) => {
+    if (d.dataset.pinned !== undefined) return;      // a pinned donut ignores hover entirely
+    focusSegment(d, d === donut ? +hit.dataset.seg : -1, false);
+  });
+});
+// keyboard parity: tabbing through the legend reads out the same way hovering does
+document.getElementById("modelsPane").addEventListener("focusin", (e) => {
+  const leg = e.target.closest(".dleg");
+  if (!leg) return;
+  const d = leg.closest(".donut");
+  if (d.dataset.pinned === undefined) focusSegment(d, +leg.dataset.seg, false);
 });
 
 function renderModels(a) {
@@ -2330,10 +2561,22 @@ function animateNum(el, target, format) {
   if (reducedMotion) return;
   const dur = 700, t0 = performance.now();
   const ease = (t) => 1 - Math.pow(1 - t, 3);
+  // Writing the final value up front is not enough on its own: the first frame immediately
+  // overwrites it with target*ease(0) === 0, and if no further frame ever arrives — tab
+  // backgrounded mid-animation, window not compositing, virtual clock — the headline stays
+  // stuck at 0. setTimeout keeps running where requestAnimationFrame does not, so this snaps
+  // the real number into place regardless. Cleared on the frame that finishes normally.
+  const snap = setTimeout(() => { el.textContent = format(target); }, dur + 120);
   function frame(now) {
-    const p = Math.min(1, (now - t0) / dur);
+    // Clamp BOTH ends. The rAF timestamp is the frame's start time, which can predate the
+    // performance.now() above when a frame was already in flight — so p can arrive negative,
+    // and the cubic ease amplifies rather than absorbs it: p = -1 gives ease = -7, i.e. the
+    // headline briefly renders as "$-1,526.81". Small negative p only flashes for one frame,
+    // but under a virtual clock it persists and every number on the page reads negative.
+    const p = Math.max(0, Math.min(1, (now - t0) / dur));
     el.textContent = format(target * ease(p));
     if (p < 1) requestAnimationFrame(frame);
+    else clearTimeout(snap);
   }
   requestAnimationFrame(frame);
 }
@@ -2359,6 +2602,13 @@ let lastShownCost = 0;
 let bookIdx = 0, bookTimer = null;
 function rollBook() {
   const all = aggregate(dayKeys);
+  // "You've used ~0x more tokens than The Little Prince" is what every book line said before
+  // any billable usage existed — the exact state a first-time reader is in.
+  if (!all.tokens) {
+    document.getElementById("foot").innerHTML = '<span class="fline">' + T("bookNone") + "</span>";
+    clearInterval(bookTimer);
+    return;
+  }
   const lines = BOOKS.map(([name, toks]) =>
     T("bookLine", Math.round(all.tokens / toks).toLocaleString(), bookName(name))
   );
@@ -2490,6 +2740,13 @@ bindDaySpark(document.getElementById("chart"));
 document.addEventListener("pointerdown", (e) => {
   const card = e.target.closest(".card, .coststrip, .today");
   if (!card) return;
+  // Not from a control. The ripple is a "you tapped this card" affordance sized to the whole
+  // card — on the Today card that is a 1600px accent circle, and it fired on every expand AND
+  // collapse of the yesterday comparison, so the disclosure button flashed a huge green sphere
+  // across the panel it was opening. Buttons, labels and inputs already give their own
+  // feedback; the card-wide wash on top of that is noise. Same rule kills it on the IRL
+  // shuffle button inside the cost strip.
+  if (e.target.closest("button, a, label, input, select, textarea, [role='button']")) return;
   const r = card.getBoundingClientRect();
   const rip = document.createElement("span");
   rip.className = "ripple";
