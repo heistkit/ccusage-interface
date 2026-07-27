@@ -188,6 +188,8 @@ if (embedded) {
   // The hash is a DOM key, never a label — the raw id must not survive into the session bucket.
   check("session keys are hashed here too", !Object.keys(sess).some((k) => k.startsWith("sess-")));
 }
+check("csv export reaches the artifact",
+  html.includes('data-act="csv"') && html.includes("cache_write_1h_tokens"));
 check("no leaked absolute paths", !html.includes(box) && !/[A-Za-z]:\\Users/.test(html));
 
 console.log("\nsandbox: " + box);

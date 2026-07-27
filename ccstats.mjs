@@ -1859,6 +1859,7 @@ const LANGS = {
       "ccstats session " + when + " (" + len + "): " + cost + " · " + tok + " tokens · " + req +
       " requests · " + days + " days · top model " + top,
     ctxCopy: "Copy summary", ctxExport: "Export JSON", ctxTheme: "Toggle theme",
+    ctxExportCsv: "Export CSV", exported: (name) => name + " downloaded",
     ctxBook: "Reroll book", ctxParty: "Party mode", ctxLang: "한국어",
     ctxHello: "What is this?",
     langBeta: "beta",
@@ -2089,6 +2090,7 @@ const LANGS = {
       "ccstats 세션 " + when + " (" + len + "): " + cost + " · 토큰 " + tok + " · 요청 " + req +
       "회 · " + days + "일 · 주 모델 " + top,
     ctxCopy: "요약 복사", ctxExport: "JSON 내보내기", ctxTheme: "테마 전환",
+    ctxExportCsv: "CSV 내보내기", exported: (name) => name + " 내려받기 완료",
     ctxBook: "다른 책으로", ctxParty: "파티 모드", ctxLang: "English",
     ctxHello: "이게 뭔가요?",
     langBeta: "베타",
@@ -2303,6 +2305,7 @@ const LANGS = {
       " リクエスト · " + days + " 日 · 主なモデル " + top,
     unitTokens: "トークン", unitMsgs: "メッセージ", unitSessions: "セッション",
     ctxCopy: "サマリーをコピー", ctxExport: "JSONを書き出し", ctxTheme: "テーマ切り替え",
+    ctxExportCsv: "CSVを書き出し", exported: (name) => name + " をダウンロードしました",
     ctxBook: "別の本にする", ctxParty: "パーティーモード", ctxLang: "日本語",
     ctxHello: "これは何ですか？",
     langBeta: "ベータ",
@@ -2511,6 +2514,7 @@ const LANGS = {
       " 次请求 · " + days + " 天 · 主要模型 " + top,
     unitTokens: "token", unitMsgs: "条消息", unitSessions: "个会话",
     ctxCopy: "复制摘要", ctxExport: "导出 JSON", ctxTheme: "切换主题",
+    ctxExportCsv: "导出 CSV", exported: (name) => "已下载 " + name,
     ctxBook: "换一本书", ctxParty: "派对模式", ctxLang: "简体中文",
     ctxHello: "这是什么？",
     langBeta: "测试版",
@@ -2719,6 +2723,7 @@ const LANGS = {
       " peticiones · " + days + " días · modelo principal " + top,
     unitTokens: "tokens", unitMsgs: "mensajes", unitSessions: "sesiones",
     ctxCopy: "Copiar resumen", ctxExport: "Exportar JSON", ctxTheme: "Cambiar tema",
+    ctxExportCsv: "Exportar CSV", exported: (name) => name + " descargado",
     ctxBook: "Otro libro", ctxParty: "Modo fiesta", ctxLang: "Español",
     ctxHello: "¿Qué es esto?",
     langBeta: "beta",
@@ -2962,6 +2967,7 @@ const ICONS = {
   pie: '<circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/>',
   bars: '<rect x="3" y="10" width="5" height="11" rx="1"/><rect x="10" y="4" width="5" height="17" rx="1"/><rect x="17" y="14" width="5" height="7" rx="1"/>',
   calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
+  table: '<rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="10" x2="9" y2="20"/>',
 };
 const icon = (n) => '<svg class="icon" viewBox="0 0 24 24">' + ICONS[n] + "</svg>";
 
@@ -4638,6 +4644,7 @@ ctx.innerHTML =
   '<ul>' +
   '<li class="el" data-act="copy">' + icon("clipboard") + '<span data-i18n="ctxCopy"></span></li>' +
   '<li class="el" data-act="export">' + icon("download") + '<span data-i18n="ctxExport"></span></li>' +
+  '<li class="el" data-act="csv">' + icon("table") + '<span data-i18n="ctxExportCsv"></span></li>' +
   '</ul><div class="sep"></div><ul>' +
   '<li class="el" data-act="theme">' + icon("moon") + '<span data-i18n="ctxTheme"></span></li>' +
   '<li class="el" data-act="lang">' + icon("globe") + '<span data-i18n="ctxLang"></span></li>' +
@@ -4774,6 +4781,94 @@ function copyContext(el) {
     a.msgs.toLocaleString(), a.sessions, a.activeDays, st.cur, st.max, fav ? pretty(fav[0]) : "") };
 }
 
+// --- CSV export ---------------------------------------------------------------------------
+//
+// One table, one grain: a row per (day, model), read from DATA.days[k].models[m] — the same leaf
+// object every cost figure on this page is derived from. The serving-mode buckets sit at a finer
+// grain and the message and session counts at a coarser one; folding either into this rectangle
+// would turn an honest SUM() in a spreadsheet into a wrong one, so they stay in the JSON export,
+// which is lossless and one row above this in the same menu.
+//
+// Everything below is machine-readable on purpose. fmt() abbreviates to "1.2M", fmtUsd() and
+// fmtUsdCents() prepend a currency symbol and apply the display-only multiplier, and
+// toLocaleString() inserts thousands separators that are literal field delimiters in this file.
+// None of the four may appear in here.
+// Names the basis every cost_usd figure was computed on, so a file opened a year from now still
+// says what its numbers mean.
+function csvPricingMode() { return priceMode === "billed" ? "as-billed" : "api-list"; }
+// RFC 4180: a field is quoted only when it has to be, and an embedded quote is doubled.
+const csvField = (s) => {
+  const v = String(s);
+  return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+};
+// Model ids come from the transcript, and a spreadsheet evaluates a cell that opens with one of
+// these as a formula. Quoting does not stop that — the parser strips the quotes first — so a
+// hostile id is defused with a leading apostrophe instead. No real id trips this.
+const csvText = (s) => csvField(/^[=+\-@\t\r]/.test(String(s)) ? "'" + s : s);
+const CSV_HEADER = ["date", "model", "input_tokens", "output_tokens", "cache_write_5m_tokens",
+  "cache_write_1h_tokens", "cache_read_tokens", "total_tokens", "billed_requests",
+  "assistant_messages", "input_rate_usd_per_mtok", "output_rate_usd_per_mtok",
+  "rate_is_guess", "serving_multiplier", "cost_usd", "pricing_mode"];
+// Every column is ASCII by construction — ISO dates, raw transcript model ids, integers — so the
+// file carries no byte order mark. Excel on Windows decodes an unmarked file with the system
+// codepage, so if a column ever gains non-ASCII text, prepend "﻿" here and only then. That is
+// also the reason the model id is written raw rather than through pretty().
+function buildCsv() {
+  const mode = csvField(csvPricingMode());
+  const rows = [CSV_HEADER.join(",")];
+  for (const k of dayKeys) {
+    const d = DATA.days[k];
+    if (!d) continue;
+    // Object key order is file-scan order, so sort it: the same history exported on two machines
+    // should produce the same bytes and diff clean.
+    for (const m of Object.keys(d.models).sort()) {
+      const v = d.models[m];
+      // The lookup rates() does, repeated inline so the row can also report whether the rate came
+      // from the table or is the fallback guess wearing a confident face.
+      const hit = PRICING.find(([re]) => re.test(m));
+      const r = hit ? hit[1] : FALLBACK_RATE;
+      // Deduplicated billed requests, rolled up from the serving buckets. models[m].msg counts
+      // assistant records and runs about 2.5x higher on real transcripts, so both are carried
+      // under their own names rather than one being passed off as the other.
+      let reqs = 0;
+      for (const b of Object.values(d.sp || {})) if (b[m]) reqs += b[m][5] || 0;
+      // The pricing lens is a scalar on this exact (day, model), so it gets its own column rather
+      // than being baked silently into cost_usd. That keeps every row auditable: the list rates
+      // times the tokens times this factor reproduces cost_usd, in either mode.
+      const f = billedMult(k, m);
+      rows.push([
+        k, csvText(m),
+        v.i, v.o, v.cw, v.c1h || 0, v.cr, mTok(v),
+        reqs, v.msg || 0,
+        r[0], r[1], hit ? "false" : "true",
+        f.toFixed(6),
+        // Unconverted USD at six decimal places. CUR is a display multiplier and has no place in a
+        // column whose name says usd; six places sits well below the smallest row that can bill
+        // anything at all.
+        (mCost(m, v) * f).toFixed(6),
+        mode,
+      ].join(","));
+    }
+  }
+  // CRLF per RFC 4180, header included, and a terminator on the last row too.
+  return rows.join("\r\n") + "\r\n";
+}
+// The basis goes in the filename because more than one of these ends up in a downloads folder, and
+// the browser's "(1)" suffix does not say which one is which.
+const csvFileName = () =>
+  "ccstats-daily-" + String(csvPricingMode()).replace(/[^A-Za-z0-9._-]+/g, "-") + ".csv";
+// Same shape as the JSON export: a blob built from a string already in memory, handed to a
+// synthetic anchor. No fetch, no form, no subresource — so there is nothing here for the page's
+// CSP to govern, and it behaves identically offline and from file://.
+function downloadFile(name, text, mime) {
+  const blob = new Blob([text], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 // Every copied figure follows the active lens, so the copied text has to name it — a pasted
 // "$2,999" that silently means something different from the one in the next message is worse than
 // no number at all. One appended clause rather than a sixth argument on five copy functions, three
@@ -4837,6 +4932,13 @@ ctx.addEventListener("click", (e) => {
       a.download = "ccstats-data.json";
       a.click();
       URL.revokeObjectURL(a.href);
+      toast(T("exported", a.download));
+      break;
+    }
+    case "csv": {
+      const name = csvFileName();
+      downloadFile(name, buildCsv(), "text/csv;charset=utf-8");
+      toast(T("exported", name));
       break;
     }
     case "theme": themeInput.click(); break;
