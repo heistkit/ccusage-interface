@@ -21,6 +21,8 @@
     "start": "node ccstats.mjs --serve --open",
     "build": "node ccstats.mjs",
     "bundle": "node tools/bundle.mjs",
+    "build:web": "node tools/build-web.mjs",
+    "vercel-build": "node tools/build-web.mjs",
     "test": "node tools/smoke.mjs ccstats.mjs",
     "prepublishOnly": "node tools/smoke.mjs ccstats.mjs"
   },

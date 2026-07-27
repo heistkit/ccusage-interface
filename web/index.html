@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Same policy the dashboard carries, and for the same reason: this page's whole claim is that
+     your transcripts never leave the machine, and a policy that forbids every outbound channel
+     makes that structural rather than a promise. connect-src 'self' is what lets us fetch the
+     dashboard shell sitting next to this file; there is nothing else to connect to. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; img-src data:; connect-src 'self'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="description" content="A usage dashboard for Claude Code. Drop in your transcripts and read them in the browser — the parsing happens on your machine, nothing is uploaded.">
+<title>ccstats — Claude Code usage, read in your browser</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%232da44e'/%3E%3Cg stroke='%23f2f5f3' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M7 16V11'/%3E%3Cpath d='M12 16V7'/%3E%3Cpath d='M17 16v-3'/%3E%3C/g%3E%3C/svg%3E">
+<style>__FONTS__</style>
+<style>
+  :root {
+    --bg: #f2f3f2; --card: #e9ebea; --text: #2b3137; --muted: #6e7781;
+    --chip: #dde0df; --chip-active: #f7f8f7; --border: #d3d7d5;
+    --cell: #dfe2e0;
+    --accent: #2da44e; --on-accent: #f2f5f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1e21; --card: #26292d; --text: #e6e8ea; --muted: #8b949e;
+      --chip: #31353a; --chip-active: #3d4248; --border: #363b41;
+      --cell: #2e3236;
+      --accent: #34b25c; --on-accent: #14201a;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    /* Geist has no Hangul — the Korean faces have to stay reachable in the fallback chain */
+    font: 17px/1.55 "Geist", -apple-system, "Segoe UI", "Malgun Gothic",
+          "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 880px; margin: 0 auto; padding: 28px 22px 56px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2;
+          stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+
+  /* --- header --- */
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+  .brand .mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: var(--on-accent);
+                 display: grid; place-items: center; }
+  .brand .mark svg { width: 19px; height: 19px; stroke-width: 2.4; }
+  .ghtop { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 15px; }
+  .ghtop:hover { color: var(--text); text-decoration: none; }
+  .ghtop svg { width: 20px; height: 20px; fill: currentColor; stroke: none; }
+
+  /* --- hero --- */
+  h1 { font-size: 44px; line-height: 1.1; letter-spacing: -.03em; margin: 52px 0 0; font-weight: 600; }
+  h1 .g { color: var(--accent); }
+  .lede { font-size: 19px; color: var(--muted); margin: 18px 0 0; max-width: 60ch; }
+
+  /* --- dropzone --- */
+  .drop {
+    margin-top: 34px; background: var(--card); border: 2px dashed var(--border); border-radius: 16px;
+    padding: 44px 28px; text-align: center; transition: border-color .18s, background .18s, transform .18s;
+  }
+  .drop.over { border-color: var(--accent); background: var(--chip-active); transform: scale(1.008); }
+  .drop .di { width: 46px; height: 46px; color: var(--accent); stroke-width: 1.6; }
+  .drop h2 { font-size: 24px; font-weight: 600; letter-spacing: -.02em; margin: 14px 0 6px; }
+  .drop p { color: var(--muted); margin: 0 0 22px; font-size: 16px; }
+  .btnrow { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  button {
+    font-family: inherit; font-size: 16px; font-weight: 500; border-radius: 10px; cursor: pointer;
+    padding: 0 20px; height: 46px; display: inline-flex; align-items: center; gap: 9px;
+    border: 1px solid transparent; transition: background-color .18s, border-radius .18s, opacity .18s;
+  }
+  button:disabled { opacity: .55; cursor: default; }
+  .primary { background: var(--accent); color: var(--on-accent); }
+  .primary:hover:not(:disabled) { border-radius: 4px; }
+  .ghost { background: var(--chip); color: var(--text); border-color: var(--border); }
+  .ghost:hover:not(:disabled) { background: var(--cell); border-radius: 4px; }
+  button svg { width: 18px; height: 18px; }
+  .hint { margin-top: 20px; font-size: 14.5px; color: var(--muted); }
+  .hint code { background: var(--chip); border: 1px solid var(--border); border-radius: 6px;
+               padding: 2px 7px; font-family: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+               font-size: 13.5px; white-space: nowrap; }
+  .hint .row { margin-top: 7px; }
+  input[type=file] { display: none; }
+
+  /* --- status --- */
+  .status { margin-top: 22px; background: var(--card); border: 1px solid var(--border);
+            border-radius: 14px; padding: 22px 24px; }
+  .status[hidden] { display: none; }
+  .status .top { display: flex; align-items: center; gap: 11px; font-size: 17px; font-weight: 500; }
+  .status .top svg { color: var(--accent); }
+  .bar { height: 7px; background: var(--cell); border-radius: 99px; overflow: hidden; margin-top: 16px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 99px;
+           transition: width .12s linear; }
+  .meta { margin-top: 12px; font-size: 15px; color: var(--muted); }
+  .status.err .top svg { color: #d1242f; }
+  @media (prefers-color-scheme: dark) { .status.err .top svg { color: #f85149; } }
+  .status .btnrow { margin-top: 20px; justify-content: flex-start; }
+  .spin { animation: spin 1.1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } .bar i { transition: none; } }
+
+  /* --- info cards --- */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 40px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px 24px; }
+  .card h3 { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; margin: 0 0 12px; }
+  .card h3 svg { color: var(--accent); width: 20px; height: 20px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15.5px; }
+  .card p + p { margin-top: 10px; }
+  pre { margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 9px;
+        padding: 12px 14px; overflow-x: auto;
+        font-family: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 14px; }
+
+  /* --- footer --- */
+  footer { margin-top: 48px; padding-top: 26px; border-top: 1px solid var(--border); text-align: center; }
+  .ghbig {
+    display: inline-flex; align-items: center; gap: 10px; font-size: 16.5px; font-weight: 500;
+    color: var(--text); background: var(--chip); border: 1px solid var(--border);
+    border-radius: 10px; padding: 11px 20px; transition: background-color .18s, border-radius .18s;
+  }
+  .ghbig:hover { background: var(--cell); border-radius: 4px; text-decoration: none; }
+  .ghbig svg { width: 21px; height: 21px; fill: currentColor; stroke: none; }
+  .fbbtn {
+    display: inline-flex; align-items: center; gap: 9px; margin-left: 10px;
+    font-size: 16.5px; font-weight: 500; color: var(--text); background: transparent;
+    border: 1px solid var(--border); border-radius: 10px; padding: 11px 20px;
+    transition: background-color .18s, border-radius .18s;
+  }
+  .fbbtn:hover { background: var(--chip); border-radius: 4px; text-decoration: none; }
+  .fbbtn svg { width: 19px; height: 19px; color: var(--accent); }
+  .fine { margin-top: 18px; font-size: 14px; color: var(--muted); }
+  .fine a { color: var(--muted); text-decoration: underline; }
+  .fine a:hover { color: var(--text); }
+
+  @media (max-width: 680px) {
+    h1 { font-size: 33px; margin-top: 38px; }
+    .lede { font-size: 17.5px; }
+    .grid { grid-template-columns: 1fr; }
+    .drop { padding: 34px 20px; }
+    .page { padding: 22px 18px 44px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <div class="brand">
+    <span class="mark"><svg class="icon" viewBox="0 0 24 24"><path d="M7 16V11"/><path d="M12 16V7"/><path d="M17 16v-3"/></svg></span>
+    ccstats
+  </div>
+  <a class="ghtop" href="__REPO__" rel="noopener noreferrer" target="_blank">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+    GitHub
+  </a>
+</header>
+
+<main>
+  <h1>Your Claude Code usage,<br>read <span class="g">in your browser</span>.</h1>
+  <p class="lede">
+    Point this at the transcript folder Claude Code already writes on your machine. It reads the
+    token counts, timestamps and model names out of them and builds the dashboard right here —
+    the same page the command-line version produces.
+  </p>
+
+  <div class="drop" id="drop">
+    <svg class="icon di" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M12 17v-6"/><path d="m9.5 13.5 2.5-2.5 2.5 2.5"/></svg>
+    <h2>Drop your <code style="font-size:.85em">projects</code> folder here</h2>
+    <p>Or pick it below. Nothing is sent anywhere — the reading happens in this tab.</p>
+    <div class="btnrow">
+      <button class="primary" id="pickDir" type="button">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        Choose folder
+      </button>
+      <button class="ghost" id="pickFiles" type="button">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        Pick .jsonl files
+      </button>
+      <a class="ghost" href="demo.html" style="text-decoration:none">
+        <button class="ghost" type="button" tabindex="-1" style="pointer-events:none">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          See a demo
+        </button>
+      </a>
+    </div>
+    <div class="hint">
+      <div class="row">macOS &amp; Linux <code>~/.claude/projects</code></div>
+      <div class="row">Windows <code>%USERPROFILE%\.claude\projects</code></div>
+    </div>
+  </div>
+
+  <input type="file" id="dirInput" webkitdirectory directory multiple>
+  <input type="file" id="fileInput" accept=".jsonl" multiple>
+
+  <div class="status" id="status" hidden>
+    <div class="top" id="statusTop"></div>
+    <div class="bar" id="barWrap" hidden><i id="bar"></i></div>
+    <div class="meta" id="statusMeta"></div>
+    <div class="btnrow" id="statusBtns" hidden></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Nothing is uploaded</h3>
+      <p>
+        There is no server here to upload to — this is a static page, and every file you choose is
+        read by the browser itself. The tab's content-security policy blocks outbound connections
+        outright, so you can confirm it in the network tab rather than take our word for it.
+      </p>
+      <p>
+        Only usage metadata is looked at: timestamps, model names, token counts, and a hashed
+        session id. Message content, prompts, file paths and project names are never read.
+      </p>
+    </div>
+    <div class="card">
+      <h3><svg class="icon" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg> Prefer the terminal?</h3>
+      <p>The command-line version finds the transcripts on its own and writes a single HTML file:</p>
+      <pre>npx ccusage-interface</pre>
+      <p>
+        Add <code>--serve</code> for a live dashboard that rescans as you work. Same code, same
+        page — this site just hands the file-finding job to you.
+      </p>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <a class="ghbig" href="__REPO__" rel="noopener noreferrer" target="_blank">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+    heistkit/ccusage-interface
+  </a>
+  <!-- Opens GitHub's issue form with the template already in it. The page posts nothing: the
+       report exists only once you have read it over and pressed submit, on GitHub. -->
+  <a class="fbbtn" id="feedback" href="__REPO__/issues/new" rel="noopener noreferrer" target="_blank">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    Send feedback
+  </a>
+  <div class="fine">
+    v__VERSION__ · MIT · not affiliated with Anthropic ·
+    <a href="__REPO__/issues" rel="noopener noreferrer" target="_blank">browse open issues</a>
+  </div>
+</footer>
+
+</div>
+
+<script>
+// The parse loop, lifted verbatim from ccstats.mjs at build time — see tools/build-web.mjs. The
+// browser runs the identical code the CLI does, so the two cannot drift apart in what they count.
+const createCollector = __COLLECTOR__;
+
+const $ = (id) => document.getElementById(id);
+const icon = (d, cls) => '<svg class="icon ' + (cls || '') + '" viewBox="0 0 24 24">' + d + '</svg>';
+const I = {
+  spinner: '<path d="M21 12a9 9 0 1 1-6.22-8.56"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  alert: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  chart: '<path d="M7 16V11"/><path d="M12 16V7"/><path d="M17 16v-3"/><rect x="3" y="3" width="18" height="18" rx="2"/>',
+  down: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+};
+const nf = (n) => n.toLocaleString();
+const mb = (b) => (b / 1048576).toFixed(b > 10485760 ? 0 : 1) + " MB";
+
+let busy = false;
+
+function setStatus(iconPath, text, meta, isErr) {
+  const el = $("status");
+  el.hidden = false;
+  el.classList.toggle("err", !!isErr);
+  $("statusTop").innerHTML = iconPath + "<span>" + text + "</span>";
+  $("statusMeta").textContent = meta || "";
+}
+function progress(frac) {
+  $("barWrap").hidden = false;
+  $("bar").style.width = Math.max(0, Math.min(1, frac)) * 100 + "%";
+}
+function fail(text, meta) {
+  $("barWrap").hidden = true;
+  $("statusBtns").hidden = true;
+  setStatus(icon(I.alert), text, meta, true);
+  busy = false;
+}
+
+// --- turning a drop into a flat list of .jsonl files ---------------------------------------
+// A dropped folder arrives as a directory entry, not a file list, so it has to be walked. The
+// reader is drained in a loop because readEntries() returns at most 100 entries per call and
+// silently stops there — the bug that shows up only for people with big transcript folders.
+function readAll(reader) {
+  return new Promise((res, rej) => {
+    const out = [];
+    const pump = () => reader.readEntries((batch) => {
+      if (!batch.length) return res(out);
+      out.push(...batch);
+      pump();
+    }, rej);
+    pump();
+  });
+}
+async function walk(entry, into) {
+  if (entry.isFile) {
+    if (!entry.name.toLowerCase().endsWith(".jsonl")) return;
+    await new Promise((res) => entry.file((f) => { into.push(f); res(); }, res));
+    return;
+  }
+  if (!entry.isDirectory) return;
+  const kids = await readAll(entry.createReader());
+  // sequential, not Promise.all: a deep tree fanned out at once opens thousands of file handles
+  for (const k of kids) await walk(k, into);
+}
+
+// --- the actual work ------------------------------------------------------------------------
+async function process(files) {
+  if (busy) return;
+  busy = true;
+  $("statusBtns").hidden = true;
+
+  const jsonl = files.filter((f) => f.name.toLowerCase().endsWith(".jsonl"));
+  if (!jsonl.length) {
+    return fail(
+      "No .jsonl transcripts in there.",
+      files.length
+        ? "Found " + nf(files.length) + " other file(s). Pick the projects folder itself — the transcripts sit in subfolders under it."
+        : "Nothing was selected."
+    );
+  }
+
+  const totalBytes = jsonl.reduce((t, f) => t + f.size, 0);
+  setStatus(icon(I.spinner, "spin"), "Reading your transcripts…", "0 of " + nf(jsonl.length) + " files");
+  progress(0);
+
+  const collector = createCollector({ hashSessions: true });
+  let done = 0, bytes = 0;
+  for (const f of jsonl) {
+    let text;
+    try { text = await f.text(); } catch { collector.skipFile(); done++; continue; }
+    // f.name only, never webkitRelativePath: the id is fed to shortHash for a dedup key, and a
+    // relative path would put folder names — which are project names — into that hash's input.
+    collector.addFile(f.name, text);
+    done++; bytes += f.size;
+    // yield to the compositor every so often, otherwise the bar never paints on a big folder
+    if (done % 25 === 0 || done === jsonl.length) {
+      progress(done / jsonl.length);
+      $("statusMeta").textContent = nf(done) + " of " + nf(jsonl.length) + " files · " + mb(bytes);
+      await new Promise((r) => setTimeout(r));
+    }
+  }
+
+  const data = collector.result({
+    roots: 1,
+    config: { accent: null, lang: null, theme: null, currency: null, pricing: null, modelNames: null },
+  });
+
+  const days = Object.keys(data.days).length;
+  if (!days) {
+    return fail(
+      "Read " + nf(jsonl.length) + " transcripts, but none of them carry usage.",
+      "That happens with very old or empty sessions. Nothing was uploaded either way."
+    );
+  }
+
+  // Hand the payload to dashboard.html through the tab's own session store, then navigate. It
+  // never touches the network, it dies with the tab, and it survives a reload of the dashboard —
+  // which a page built by rewriting this document in place would not.
+  const payload = JSON.stringify(data);
+  let stored = true;
+  try {
+    sessionStorage.setItem("ccstats:data", payload);
+  } catch (e) {
+    stored = false; // quota, or storage blocked entirely (private mode on some browsers)
+  }
+
+  $("barWrap").hidden = true;
+  setStatus(
+    icon(I.check),
+    "Ready — " + nf(days) + " active day" + (days === 1 ? "" : "s") + " across " + nf(data.files) + " transcripts.",
+    data.models.length + " model" + (data.models.length === 1 ? "" : "s") + " · " + nf(data.lines) + " lines read" +
+      (data.badLines ? " · " + nf(data.badLines) + " unparseable lines skipped" : "")
+  );
+
+  const btns = $("statusBtns");
+  btns.hidden = false;
+  btns.innerHTML =
+    (stored ? '<button class="primary" id="go" type="button">' + icon(I.chart) + "Open dashboard</button>" : "") +
+    '<button class="' + (stored ? "ghost" : "primary") + '" id="dl" type="button">' +
+      icon(I.down) + "Download the HTML</button>";
+
+  if (stored) $("go").addEventListener("click", () => { location.href = "dashboard.html"; });
+  else {
+    $("statusMeta").textContent =
+      "That is more than this tab can hold in session storage, so the dashboard has to come as a " +
+      "file. Download it and open it — the page works the same, offline.";
+  }
+
+  // Only fetched when asked for: the viewing path does not need it, and it is 300 KB.
+  $("dl").addEventListener("click", async () => {
+    const btn = $("dl");
+    btn.disabled = true;
+    try {
+      const res = await fetch("dashboard.tpl.html", { cache: "force-cache" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      // function replacement, not a string: $& and $1 occur inside the JSON and would otherwise
+      // be read as substitution patterns and silently corrupt the payload
+      const html = (await res.text()).replace("__DATA__", () => payload);
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "ccstats.html";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (e) {
+      fail("Could not build the downloadable page.", String(e && e.message || e));
+    }
+    btn.disabled = false;
+  });
+
+  busy = false;
+}
+
+// Prefill the issue form. The bare href already opens a blank new-issue page, so this is an
+// enhancement rather than a dependency — and it is a link, not a submission: nothing leaves this
+// page, and the report only exists once you read it over and press submit on GitHub.
+$("feedback").href += "?title=" + encodeURIComponent("Feedback: ") + "&body=" + encodeURIComponent(
+  "### What happened\n\n\n### What you expected instead\n\n\n---\n" +
+  "Nothing was filled in automatically — no numbers, costs, model names, or paths from your " +
+  "dashboard are in this issue unless you add them yourself. If it helps, mention your OS and browser.\n"
+);
+
+// --- wiring ---------------------------------------------------------------------------------
+$("pickDir").addEventListener("click", () => $("dirInput").click());
+$("pickFiles").addEventListener("click", () => $("fileInput").click());
+for (const id of ["dirInput", "fileInput"]) {
+  $(id).addEventListener("change", (e) => {
+    const files = [...e.target.files];
+    e.target.value = ""; // so picking the same folder twice in a row still fires
+    process(files);
+  });
+}
+
+const drop = $("drop");
+// dragover has to be cancelled on both the zone and the document: without the document-level
+// handler the browser navigates away to the dropped file if the aim is even slightly off
+for (const ev of ["dragenter", "dragover"]) {
+  document.addEventListener(ev, (e) => { e.preventDefault(); });
+  drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); });
+}
+drop.addEventListener("dragleave", (e) => { if (e.target === drop) drop.classList.remove("over"); });
+document.addEventListener("drop", (e) => e.preventDefault());
+
+drop.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  if (busy) return;
+
+  const items = [...(e.dataTransfer.items || [])];
+  const entries = items.map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!entries.length) return process([...(e.dataTransfer.files || [])]);
+
+  setStatus(icon(I.spinner, "spin"), "Looking through the folder…", "");
+  $("barWrap").hidden = true;
+  const found = [];
+  try {
+    for (const en of entries) await walk(en, found);
+  } catch (err) {
+    return fail("Could not read that folder.", String(err && err.message || err));
+  }
+  process(found);
+});
+</script>
+</body>
+</html>

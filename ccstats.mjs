@@ -77,26 +77,35 @@ function* jsonlFiles(dir) {
   }
 }
 
-// FNV-1a. Session ids are needed to count distinct sessions across day boundaries, but the raw
-// UUIDs identify real conversations and end up in the exported JSON, so they are reduced to an
-// opaque 8-char token first. Collisions are irrelevant here — worst case two sessions merge in
-// a count. Nothing is ever reversed back into an id.
-function shortHash(s) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, "0");
-}
+// ---------------------------------------------------------------------------
+// the parse loop
+// ---------------------------------------------------------------------------
+// Deliberately self-contained: this closure references nothing outside its own body, which is
+// what lets tools/build-web.mjs lift it verbatim via Function.prototype.toString() and run the
+// identical code in the browser for the drop-in-a-folder build on the web. Keep it that way — a
+// reference to a module-level binding from in here parses fine under Node and then throws a
+// ReferenceError in a browser. Everything Node-specific (locating roots, reading files off disk)
+// stays outside it, in buildData.
+export function createCollector(opts = {}) {
+  const hashSessions = opts.hashSessions !== false;
 
-// day key in local time
-const dayKey = (d) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  // FNV-1a. Session ids are needed to count distinct sessions across day boundaries, but the raw
+  // UUIDs identify real conversations and end up in the exported JSON, so they are reduced to an
+  // opaque 8-char token first. Collisions are irrelevant here — worst case two sessions merge in
+  // a count. Nothing is ever reversed back into an id.
+  const shortHash = (s) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16).padStart(8, "0");
+  };
 
-export function buildData(opts = {}) {
-const roots = opts.roots || CONFIG.roots || defaultRoots();
-const hashSessions = CONFIG.hashSessions !== false;
+  // day key in local time
+  const dayKey = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 const days = {}; // dayKey -> { models:{name:{i,o,cw,cr,c1h,msg}}, msgs, sessions:Set, hours:[24], hm }
 const seenUsage = new Set(); // dedup token counting (message id + request id)
 const seenMsg = new Set(); // dedup message counting (uuid)
@@ -106,13 +115,22 @@ let files = 0, lines = 0, badLines = 0;
 // hm: hour -> model -> [i,o,cw,cr]. Sparse (only hours that actually billed) and keyed by model
 // because cost per token spans 12x between the priciest and cheapest models — an hourly bar
 // built from a blended day rate would be visibly wrong on any mixed-model hour.
-const getDay = (k) => (days[k] ??= { models: {}, msgs: 0, sessions: new Set(), hours: new Array(24).fill(0), hm: {} });
+// sp: "<speed>|<tier>" -> model -> [i,o,cw,cr,c1h,msg]. Two axes in one key rather than two
+// parallel maps: a run that is both fast and batched stays a single bucket instead of being
+// counted once under each, and either axis is still readable by splitting on the bar.
+const getDay = (k) => (days[k] ??= { models: {}, msgs: 0, sessions: new Set(), hours: new Array(24).fill(0), hm: {}, sp: {} });
 
-for (const root of roots) {
-for (const file of jsonlFiles(root)) {
+return {
+
+// A file that existed but could not be read still happened, and the caller already committed to
+// scanning it — counting it here keeps "scanned N transcript files" honest.
+skipFile() { files++; },
+
+// `id` stands in for the file path, and is only ever fed to shortHash (see the uuid fallback
+// below), so no path can reach the output. The browser build passes a bare filename for the
+// same reason: there is nothing useful to leak even if it did.
+addFile(id, text) {
   files++;
-  let text;
-  try { text = readFileSync(file, "utf8"); } catch { continue; } // locked/rotated mid-scan
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     lines++;
@@ -128,7 +146,7 @@ for (const file of jsonlFiles(root)) {
     if (o.sessionId) day.sessions.add(hashSessions ? shortHash(o.sessionId) : o.sessionId);
 
     // the fallback key uses only the file path's hash, so no path ever reaches the output
-    const uuid = o.uuid || shortHash(file) + ":" + o.timestamp + ":" + o.type;
+    const uuid = o.uuid || shortHash(id) + ":" + o.timestamp + ":" + o.type;
     if (!seenMsg.has(uuid)) {
       seenMsg.add(uuid);
       day.msgs++;
@@ -169,32 +187,65 @@ for (const file of jsonlFiles(root)) {
           const hb = (day.hm[d.getHours()] ??= {});
           const he = (hb[model] ??= [0, 0, 0, 0, 0]);
           for (let n = 0; n < 5; n++) he[n] += vals[n];
+
+          // How the request was served. `speed` is "fast" when Fast Mode was on, `service_tier`
+          // is "batch" for the Batch API and "priority" for Priority Tier. Both are absent on
+          // older transcripts, which is why "unknown" is a real bucket rather than folded into
+          // standard — the page should say it does not know, not guess.
+          const sk = (u.speed || "unknown") + "|" + (u.service_tier || "unknown");
+          const sb = (day.sp[sk] ??= {});
+          const sm = (sb[model] ??= [0, 0, 0, 0, 0, 0]);
+          for (let n = 0; n < 5; n++) sm[n] += vals[n];
+          sm[5]++;
         }
       }
     }
   }
-}
-}
+},
 
+// `meta` carries the two things only the caller can know: how many roots it walked, and which
+// config was in force. The browser has neither a filesystem nor a config file, so it passes its
+// own — which is why these are arguments rather than reads of the module-level CONFIG.
+result(meta = {}) {
 return {
   generatedAt: new Date().toISOString(),
   files, lines, badLines,
-  roots: roots.length,          // count only — the paths themselves are not shipped
+  roots: meta.roots || 0,       // count only — the paths themselves are not shipped
   models: [...models].sort(),
-  config: {
-    accent: CONFIG.accent || null,
-    lang: CONFIG.lang || null,
-    theme: CONFIG.theme || null,
-    currency: CONFIG.currency || null,
-    pricing: CONFIG.pricing || null,
-    modelNames: CONFIG.modelNames || null,
-  },
+  config: meta.config || { accent: null, lang: null, theme: null, currency: null, pricing: null, modelNames: null },
   days: Object.fromEntries(
     Object.entries(days)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => [k, { models: v.models, msgs: v.msgs, sessions: [...v.sessions], hours: v.hours, hm: v.hm }])
+      .map(([k, v]) => [k, { models: v.models, msgs: v.msgs, sessions: [...v.sessions], hours: v.hours, hm: v.hm, sp: v.sp }])
   ),
 };
+},
+
+};
+}
+
+// The Node side of the scan: find the transcripts, hand their text to the collector above.
+export function buildData(opts = {}) {
+  const roots = opts.roots || CONFIG.roots || defaultRoots();
+  const collector = createCollector({ hashSessions: CONFIG.hashSessions !== false });
+  for (const root of roots) {
+    for (const file of jsonlFiles(root)) {
+      let text;
+      try { text = readFileSync(file, "utf8"); } catch { collector.skipFile(); continue; } // locked/rotated mid-scan
+      collector.addFile(file, text);
+    }
+  }
+  return collector.result({
+    roots: roots.length,
+    config: {
+      accent: CONFIG.accent || null,
+      lang: CONFIG.lang || null,
+      theme: CONFIG.theme || null,
+      currency: CONFIG.currency || null,
+      pricing: CONFIG.pricing || null,
+      modelNames: CONFIG.modelNames || null,
+    },
+  });
 }
 
 const TEMPLATE = String.raw`<!DOCTYPE html>
@@ -530,6 +581,11 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   .today .tcmpd.flat { color: var(--muted); font-weight: 500; }
   /* models tab */
   .models { display: none; flex-direction: column; gap: 10px; }
+  /* serving-mode card: reuses .mrow wholesale so it reads as part of the same list */
+  .sptitle { display: flex; align-items: center; gap: 8px; margin: 14px 2px 2px;
+             font-size: 15px; font-weight: 650; color: var(--muted); }
+  .sptitle svg { width: 17px; height: 17px; color: var(--accent); }
+  .sphint { color: var(--muted); font-size: 13.5px; padding: 2px 4px 0; line-height: 1.5; }
   .mrow { background: var(--card); border-radius: 10px; padding: 13px 15px; }
   .mrow .mtop { display: flex; justify-content: space-between; font-size: 15px; margin-bottom: 8px; }
   .mrow .mname { font-weight: 650; }
@@ -1576,6 +1632,11 @@ const LANGS = {
     wDonutAlt: "Share of tokens by input, output and cache",
     tipBalance: "Dollars and cents of the estimate for this range.",
     emptyRange: "No data in this range",
+    spTitle: "How it was served",
+    spTip: "From usage.speed and usage.service_tier in the transcript. Fast Mode bills at 2× the standard rate, the Batch API at half. Priority Tier has no flat published multiplier, so it is costed at standard rates here.",
+    spHint: "Fast Mode and batched runs would appear here as their own rows.",
+    spDelta: (base, adj) => "Every other figure on this page is priced at standard rates — " + base + " for this range. Applying the Fast Mode premium and the Batch discount moves it to " + adj + ".",
+    spNames: { fast: "Fast Mode", standard: "Standard", batch: "Batch API", priority: "Priority Tier", unknown: "Not recorded" },
     ctxCopy: "Copy summary", ctxExport: "Export JSON", ctxTheme: "Toggle theme",
     ctxBook: "Reroll book", ctxParty: "Party mode", ctxLang: "한국어",
     ctxHello: "What is this?",
@@ -1585,6 +1646,12 @@ const LANGS = {
     fsEnter: "Enter fullscreen", fsExit: "Leave fullscreen",
     fsBlocked: "Fullscreen was refused by the browser",
     ctxRedact: "Hide the numbers", ctxUnredact: "Show the numbers",
+    ctxFeedback: "Send feedback",
+    // Deliberately defined only here: T() falls back to English for any key a language is
+    // missing, so every locale opens the same issue template on an English-language repo while
+    // still reading "Send feedback" in its own words above.
+    fbTitle: "Feedback: ",
+    fbBody: "### What happened\n\n\n### What you expected instead\n\n\n---\nNothing was filled in automatically — no numbers, costs, model names, or paths from your dashboard are in this issue unless you add them yourself. If it helps, mention your OS and browser.\n",
     redactOn: "Numbers hidden — safe to screenshot", redactOff: "Numbers visible again",
     helloTitle: "Hey — this is ccstats.",
     helloSub: "A picture of how you actually use Claude Code, built from the transcripts already sitting on this machine.",
@@ -1736,6 +1803,11 @@ const LANGS = {
     wDonutAlt: "입력·출력·캐시 토큰 비율",
     tipBalance: "이 기간 추정치의 달러와 센트입니다.",
     emptyRange: "이 기간에는 데이터가 없습니다",
+    spTitle: "어떻게 처리됐나",
+    spTip: "대화 기록의 usage.speed와 usage.service_tier에서 읽습니다. Fast Mode는 표준 단가의 2배, Batch API는 절반으로 계산합니다. Priority Tier는 공개된 고정 배수가 없어 표준 단가로 계산합니다.",
+    spHint: "Fast Mode나 배치 실행을 쓰면 여기에 별도 항목으로 나타납니다.",
+    spDelta: (base, adj) => "이 페이지의 다른 금액은 모두 표준 단가 기준입니다 — 이 기간은 " + base + ". Fast Mode 할증과 Batch 할인을 반영하면 " + adj + "이 됩니다.",
+    spNames: { fast: "Fast Mode", standard: "표준", batch: "Batch API", priority: "Priority Tier", unknown: "기록 없음" },
     ctxCopy: "요약 복사", ctxExport: "JSON 내보내기", ctxTheme: "테마 전환",
     ctxBook: "다른 책으로", ctxParty: "파티 모드", ctxLang: "English",
     ctxHello: "이게 뭔가요?",
@@ -1745,6 +1817,7 @@ const LANGS = {
     fsEnter: "전체 화면", fsExit: "전체 화면 끝내기",
     fsBlocked: "브라우저가 전체 화면을 거부했습니다",
     ctxRedact: "숫자 가리기", ctxUnredact: "숫자 보이기",
+    ctxFeedback: "의견 보내기",
     redactOn: "숫자를 가렸습니다 — 캡처해도 안전해요", redactOff: "숫자를 다시 표시합니다",
     helloTitle: "안녕하세요 — ccstats입니다.",
     helloSub: "이 컴퓨터에 이미 쌓여 있는 대화 기록으로 그린, 당신의 실제 Claude Code 사용 그림입니다.",
@@ -1884,6 +1957,11 @@ const LANGS = {
     wDonutAlt: "入力・出力・キャッシュのトークン比率",
     tipBalance: "この期間の推定額の円未満まで。",
     emptyRange: "この期間のデータはありません",
+    spTitle: "処理のされ方",
+    spTip: "履歴の usage.speed と usage.service_tier から読み取ります。Fast Mode は標準単価の2倍、Batch API は半額で計算します。Priority Tier は公開された固定倍率がないため、標準単価で計算しています。",
+    spHint: "Fast Mode やバッチ実行を使うと、ここに個別の行として表示されます。",
+    spDelta: (base, adj) => "このページの他の金額はすべて標準単価です — この期間は " + base + "。Fast Mode の割増と Batch の割引を反映すると " + adj + " になります。",
+    spNames: { fast: "Fast Mode", standard: "標準", batch: "Batch API", priority: "Priority Tier", unknown: "記録なし" },
     unitTokens: "トークン", unitMsgs: "メッセージ", unitSessions: "セッション",
     ctxCopy: "サマリーをコピー", ctxExport: "JSONを書き出し", ctxTheme: "テーマ切り替え",
     ctxBook: "別の本にする", ctxParty: "パーティーモード", ctxLang: "日本語",
@@ -1894,6 +1972,7 @@ const LANGS = {
     fsEnter: "全画面表示", fsExit: "全画面を終了",
     fsBlocked: "ブラウザが全画面表示を拒否しました",
     ctxRedact: "数値を隠す", ctxUnredact: "数値を表示",
+    ctxFeedback: "フィードバックを送る",
     redactOn: "数値を隠しました — スクリーンショットでも安全です", redactOff: "数値を再表示しました",
     ctxCopyOf: (what) => what + "をコピー",
     copied: "サマリーをコピーしました",
@@ -2027,6 +2106,11 @@ const LANGS = {
     wDonutAlt: "输入、输出与缓存的 token 占比",
     tipBalance: "该期间预估金额的整数与小数部分。",
     emptyRange: "该期间没有数据",
+    spTitle: "以何种方式处理",
+    spTip: "读取自记录中的 usage.speed 与 usage.service_tier。Fast Mode 按标准单价的 2 倍计费，Batch API 按半价。Priority Tier 没有公开的固定倍率，这里按标准单价计算。",
+    spHint: "使用 Fast Mode 或批处理后，会在这里单独成行。",
+    spDelta: (base, adj) => "本页其他金额均按标准单价计算 —— 该期间为 " + base + "。计入 Fast Mode 溢价与 Batch 折扣后为 " + adj + "。",
+    spNames: { fast: "Fast Mode", standard: "标准", batch: "Batch API", priority: "Priority Tier", unknown: "未记录" },
     unitTokens: "token", unitMsgs: "条消息", unitSessions: "个会话",
     ctxCopy: "复制摘要", ctxExport: "导出 JSON", ctxTheme: "切换主题",
     ctxBook: "换一本书", ctxParty: "派对模式", ctxLang: "简体中文",
@@ -2037,6 +2121,7 @@ const LANGS = {
     fsEnter: "进入全屏", fsExit: "退出全屏",
     fsBlocked: "浏览器拒绝了全屏请求",
     ctxRedact: "隐藏数字", ctxUnredact: "显示数字",
+    ctxFeedback: "发送反馈",
     redactOn: "数字已隐藏 — 可以放心截图", redactOff: "数字已重新显示",
     ctxCopyOf: (what) => "复制" + what,
     copied: "已复制摘要",
@@ -2170,6 +2255,11 @@ const LANGS = {
     wDonutAlt: "Proporción de tokens por entrada, salida y caché",
     tipBalance: "Euros y céntimos de la estimación de este periodo.",
     emptyRange: "No hay datos en este periodo",
+    spTitle: "Cómo se atendió",
+    spTip: "Leído de usage.speed y usage.service_tier en la transcripción. Fast Mode cuesta 2× la tarifa estándar; la Batch API, la mitad. Priority Tier no tiene un multiplicador fijo publicado, así que aquí se calcula a tarifa estándar.",
+    spHint: "Fast Mode y las ejecuciones por lotes aparecerían aquí como filas propias.",
+    spDelta: (base, adj) => "El resto de las cifras de esta página usan la tarifa estándar: " + base + " en este periodo. Con el recargo de Fast Mode y el descuento de Batch pasa a " + adj + ".",
+    spNames: { fast: "Fast Mode", standard: "Estándar", batch: "Batch API", priority: "Priority Tier", unknown: "Sin registrar" },
     unitTokens: "tokens", unitMsgs: "mensajes", unitSessions: "sesiones",
     ctxCopy: "Copiar resumen", ctxExport: "Exportar JSON", ctxTheme: "Cambiar tema",
     ctxBook: "Otro libro", ctxParty: "Modo fiesta", ctxLang: "Español",
@@ -2180,6 +2270,7 @@ const LANGS = {
     fsEnter: "Pantalla completa", fsExit: "Salir de pantalla completa",
     fsBlocked: "El navegador rechazó la pantalla completa",
     ctxRedact: "Ocultar los números", ctxUnredact: "Mostrar los números",
+    ctxFeedback: "Enviar comentarios",
     redactOn: "Números ocultos — seguro para capturas", redactOff: "Números visibles de nuevo",
     ctxCopyOf: (what) => "Copiar " + what,
     copied: "Resumen copiado",
@@ -2387,6 +2478,7 @@ const ICONS = {
   shrink: '<path d="M3 8h3a2 2 0 0 0 2-2V3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
   eyeoff: '<path d="M10.7 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.9 17.9 0 0 1-3 3.9"/><path d="M6.2 6.2A17.7 17.7 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 4.5-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M2 2l20 20"/>',
+  gauge: '<path d="M3.34 19a10 10 0 1 1 17.32 0"/><circle cx="12" cy="15" r="2.5"/><path d="M13.8 13.2 18 8"/>',
   pie: '<circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/>',
   bars: '<rect x="3" y="10" width="5" height="11" rx="1"/><rect x="10" y="4" width="5" height="17" rx="1"/><rect x="17" y="14" width="5" height="7" rx="1"/>',
 };
@@ -2418,7 +2510,7 @@ function keysInRange() {
 
 function aggregate(keys) {
   const sessions = new Set(); const hours = new Array(24).fill(0);
-  const models = {}; let msgs = 0, tokens = 0, cost = 0;
+  const models = {}; const sp = {}; let msgs = 0, tokens = 0, cost = 0;
   // cw here means "all cache writes" — the 5m and 1h tiers are summed for display but priced
   // separately (1.25x vs 2x input), which is why costParts is accumulated, not derived
   const totals = { i: 0, o: 0, cw: 0, cr: 0 };
@@ -2440,9 +2532,48 @@ function aggregate(keys) {
       costParts.cr += v.cr * inp * 0.1 / 1e6;
       tokens += mTok(v); cost += mCost(m, v);
     }
+    // Kept per model inside each bucket, not blended: the multipliers below scale a *rate*, and
+    // rates differ 12x across models, so a bucket's cost has to be summed model by model.
+    for (const [key, byModel] of Object.entries(d.sp || {})) {
+      const bucket = (sp[key] ??= {});
+      for (const [m, arr] of Object.entries(byModel)) {
+        const e = (bucket[m] ??= { i: 0, o: 0, cw: 0, cr: 0, c1h: 0, msg: 0 });
+        e.i += arr[0]; e.o += arr[1]; e.cw += arr[2]; e.cr += arr[3]; e.c1h += arr[4]; e.msg += arr[5];
+      }
+    }
   }
-  return { sessions: sessions.size, hours, models, msgs, tokens, cost, totals, costParts, activeDays: keys.filter((k) => DATA.days[k].msgs > 0).length };
+  return { sessions: sessions.size, hours, models, sp, msgs, tokens, cost, totals, costParts, activeDays: keys.filter((k) => DATA.days[k].msgs > 0).length };
 }
+
+// --- how requests were served: Fast Mode, the Batch API, Priority Tier ---------------------
+//
+// Fast Mode runs the same model at a premium: Opus 5 fast bills $10/$50 per MTok against $5/$25
+// standard, so 2x. The Batch API bills at half. Priority Tier's premium is not a published flat
+// multiplier, so it gets its own bucket and is priced at standard rates rather than being given
+// an invented number — the page would rather under-claim than make one up.
+const SPEED_MULT = { fast: 2 };
+const TIER_MULT = { batch: 0.5 };
+const spMult = (key) => {
+  const [speed, tier] = key.split("|");
+  return (SPEED_MULT[speed] || 1) * (TIER_MULT[tier] || 1);
+};
+const spCost = (key, byModel) =>
+  Object.entries(byModel).reduce((t, [m, v]) => t + mCost(m, v), 0) * spMult(key);
+const spTokens = (byModel) => Object.values(byModel).reduce((t, v) => t + mTok(v), 0);
+const spMsgs = (byModel) => Object.values(byModel).reduce((t, v) => t + v.msg, 0);
+// A value this build has never seen still has to render — and it comes from the transcript, so
+// it goes through the same escaping every other transcript-sourced string does.
+const spLabel = (key) => {
+  const names = T("spNames");
+  const [speed, tier] = key.split("|");
+  const parts = [];
+  if (speed === "fast") parts.push(names.fast);
+  else if (speed !== "standard" && speed !== "unknown") parts.push(prettyFallback(speed));
+  if (tier === "batch" || tier === "priority") parts.push(names[tier]);
+  else if (tier !== "standard" && tier !== "unknown") parts.push(prettyFallback(tier));
+  if (parts.length) return parts.join(" · ");
+  return speed === "unknown" && tier === "unknown" ? names.unknown : names.standard;
+};
 
 function streaks(keys) {
   const set = new Set(keys.filter((k) => DATA.days[k].msgs > 0));
@@ -3030,6 +3161,36 @@ document.getElementById("modelsPane").addEventListener("focusin", (e) => {
   if (d.dataset.pinned === undefined) focusSegment(d, +leg.dataset.seg, false);
 });
 
+// Fast Mode / Batch API / Priority Tier, read straight out of usage.speed and usage.service_tier.
+// Rendered with the same .mrow markup as the model list above it, so the two read as one list.
+function speedHTML(a) {
+  const rows = Object.entries(a.sp || {}).sort((x, y) => spTokens(y[1]) - spTokens(x[1]));
+  if (!rows.length) return "";
+  const total = rows.reduce((t, [, v]) => t + spTokens(v), 0) || 1;
+  const max = spTokens(rows[0][1]) || 1;
+  // Everything on one standard bucket is the common case and looks like a bug ("why is there a
+  // chart of one bar?"), so say what would make a second one appear.
+  const plain = rows.every(([k]) => k === "standard|standard" || k === "unknown|unknown");
+  // Every other cost on the page is priced at standard rates, so once a premium or discount is
+  // in play these rows deliberately disagree with the model list above. Reconcile it out loud —
+  // two totals on one screen that don't add up read as a bug, not as a finding.
+  const base = rows.reduce((t, [, v]) => t + Object.entries(v).reduce((s, [m, x]) => s + mCost(m, x), 0), 0);
+  const adj = rows.reduce((t, [k, v]) => t + spCost(k, v), 0);
+  const delta = Math.abs(adj - base) > 0.005
+    ? '<div class="sphint">' + T("spDelta", fmtUsd(base), fmtUsd(adj)) + "</div>" : "";
+  return '<div class="sptitle"><span data-tip="' + attr(T("spTip")) + '">' + icon("gauge") +
+    "<span>" + T("spTitle") + "</span></span></div>" +
+    rows.map(([k, v], i) => {
+      const tk = spTokens(v);
+      return '<div class="mrow" style="animation-delay:' + i * 60 + 'ms"><div class="mtop"><span class="mname">' +
+        spLabel(k) + '</span><span class="mmeta"><span data-exact="' + fmtUsdCents(spCost(k, v)) + '">' +
+        fmtUsd(spCost(k, v)) + "</span> · " + exb(tk) + " " + T("unitTokens") + " · " +
+        spMsgs(v).toLocaleString() + " " + T("unitMsgs") + " · " + pctStr(tk, total) +
+        '</span></div><div class="bar"><i style="width:' + Math.max(2, (tk / max) * 100) + '%"></i></div></div>';
+    }).join("") + delta +
+    (plain ? '<div class="sphint">' + T("spHint") + "</div>" : "");
+}
+
 function renderModels(a) {
   const pane = document.getElementById("modelsPane");
   const rows = Object.entries(a.models).sort((x, y) => mTok(y[1]) - mTok(x[1]));
@@ -3040,7 +3201,7 @@ function renderModels(a) {
         '</span><span class="mmeta"><span data-exact="' + fmtUsdCents(mCost(m, v)) + '">' + fmtUsd(mCost(m, v)) + "</span> · " +
         exb(mTok(v)) + " " + T("unitTokens") + " · " + v.msg.toLocaleString() + " " + T("unitMsgs") +
         '</span></div><div class="bar"><i style="width:' + Math.max(2, (mTok(v) / max) * 100) + '%"></i></div></div>'
-      ).join("")
+      ).join("") + speedHTML(a)
     : '<div class="empty">' + T("emptyRange") + "</div>");
 }
 
@@ -3553,6 +3714,7 @@ ctx.innerHTML =
   '<li class="el" data-act="book">' + icon("book") + '<span data-i18n="ctxBook"></span></li>' +
   '<li class="el" data-act="redact">' + icon("eyeoff") + '<span data-i18n="ctxRedact"></span></li>' +
   '<li class="el" data-act="hello">' + icon("sparkles") + '<span data-i18n="ctxHello"></span></li>' +
+  '<li class="el" data-act="feedback">' + icon("message") + '<span data-i18n="ctxFeedback"></span></li>' +
   '</ul><div class="sep"></div><ul>' +
   '<li class="el special" data-act="party">' + icon("sparkles") + '<span data-i18n="ctxParty"></span></li>' +
   '</ul>';
@@ -3705,6 +3867,18 @@ ctx.addEventListener("click", (e) => {
     case "book": rollBook(); break;
     case "redact": setRedacted(!redacted); break;
     case "hello": closeCtx(); showHello(); break;
+    // Opens GitHub in a new tab with the issue form already filled in. The page itself sends
+    // nothing — no fetch, no form post, no beacon; the report only exists once the reader reads
+    // it over and presses submit on GitHub. That is the only shape a feedback button can take
+    // here without contradicting the promise at the top of this file.
+    case "feedback": {
+      closeCtx();
+      const url = "https://github.com/heistkit/ccusage-interface/issues/new?title=" +
+        encodeURIComponent(T("fbTitle")) + "&body=" + encodeURIComponent(T("fbBody"));
+      // noopener/noreferrer: the new tab gets no handle back to this document
+      window.open(url, "_blank", "noopener,noreferrer");
+      break;
+    }
     case "party":
       document.body.classList.toggle("party");
       confetti(cx, cy, { n: 40 });
@@ -3790,8 +3964,12 @@ setTimeout(() => {
 
 // .replace with a function argument, not a string: a literal replacement would treat $& / $1 in
 // the font base64 or the JSON as substitution patterns and silently corrupt the output.
-export const buildHTML = (data) =>
-  TEMPLATE.replace("__FONTS__", () => FONTS).replace("__DATA__", () => JSON.stringify(data));
+//
+// The page with its fonts but without its payload — __DATA__ is still a placeholder. The web
+// build ships this as a static asset and splices in data the browser parsed locally, so the
+// dashboard someone gets from the deployed site is the same document the CLI writes.
+export const buildShell = () => TEMPLATE.replace("__FONTS__", () => FONTS);
+export const buildHTML = (data) => buildShell().replace("__DATA__", () => JSON.stringify(data));
 
 // ---------------------------------------------------------------------------
 // CLI

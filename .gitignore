@@ -20,6 +20,11 @@ ccstats.rb
 ccstats.json
 *.tgz
 
+# Static site output (tools/build-web.mjs). Regenerated on every deploy; nothing in it is
+# authored by hand — web/index.html is the source.
+public/
+.vercel/
+
 node_modules/
 .DS_Store
 Thumbs.db

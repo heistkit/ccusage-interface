@@ -80,6 +80,16 @@ for (let back = DAYS - 1; back >= 0; back--) {
     const cw5 = between(4000, 52000);
     const cr = between(60000, 900000); // the class that dominates real usage
 
+    // How the request was served. Weighted so the demo shows what the serving-mode card is for
+    // — mostly standard, a visible slice of Fast Mode, a little batched work, and a tail of old
+    // turns that predate the fields entirely.
+    const roll = rnd();
+    const serving =
+      roll < 0.72 ? { speed: "standard", service_tier: "standard" }
+      : roll < 0.88 ? { speed: "fast", service_tier: "standard" }
+      : roll < 0.95 ? { speed: "standard", service_tier: "batch" }
+      : null;
+
     lines.push(JSON.stringify({ type: "user", timestamp: ts.toISOString(), uuid: "u" + n, sessionId: sess }));
     lines.push(JSON.stringify({
       type: "assistant", timestamp: ts.toISOString(), uuid: "a" + n, sessionId: sess, requestId: "r" + n,
@@ -91,6 +101,7 @@ for (let back = DAYS - 1; back >= 0; back--) {
           cache_creation_input_tokens: cw5 + c1h,
           cache_read_input_tokens: cr,
           cache_creation: { ephemeral_5m_input_tokens: cw5, ephemeral_1h_input_tokens: c1h },
+          ...(serving || {}),
         },
       },
     }));

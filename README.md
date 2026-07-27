@@ -20,7 +20,9 @@ node ccstats.mjs --serve   # live dashboard on http://127.0.0.1:8743
 - **Today card** — cost split by token class, a 24-bar hourly spend strip, per-model rows,
   averages per day / active hour / session / message, and a collapsible today-vs-yesterday table.
 - **Heatmap + daily chart** with per-day tooltips, streaks, and a record-day marker.
-- **Models tab** — a wallet card with a cost odometer, per-model token breakdowns and shares.
+- **Models tab** — a wallet card with a cost odometer, per-model token breakdowns and shares, and
+  a **how it was served** card: Fast Mode, the Batch API, and Priority Tier split out from
+  standard traffic, read from `usage.speed` and `usage.service_tier` in the transcripts.
 - **Right-click anything** to copy just that scope: a heatmap day, an hour bar, a model row, a
   stat card. Right-click the background for the whole-range summary.
 - English / 한국어, light / dark, and a few easter eggs.
@@ -76,6 +78,32 @@ cd ccusage-interface && node ccstats.mjs --serve --open
 Note that from source, `geist-fonts.css` must sit beside `ccstats.mjs`. Release builds inline it;
 the repo build reads it off disk and falls back to system fonts without it.
 
+## Run it in a browser instead (Vercel)
+
+The same dashboard, with the one job the CLI does for you handed back: finding the transcripts.
+You point the browser at your `projects` folder, the browser parses it, and the page is built in
+the tab. **Nothing is uploaded** — there is no server to upload to. The deploy is static files
+only: no serverless functions, no runtime, no environment variables.
+
+```bash
+npm run build:web      # -> public/
+```
+
+Deploying to Vercel needs no configuration beyond the committed `vercel.json` — import the repo
+and it runs `build:web` and serves `public/`. The same output works on any static host.
+
+| File | |
+|---|---|
+| `public/index.html` | the drop zone: folder picker, drag-and-drop, and the parse loop lifted out of `ccstats.mjs` |
+| `public/dashboard.html` | the dashboard; reads its payload from the tab's `sessionStorage` |
+| `public/dashboard.tpl.html` | the same page with `__DATA__` intact, fetched only when you ask to download your dashboard as a file |
+| `public/demo.html` | the fabricated-data page |
+
+The browser runs the **same** counting code as the CLI: `tools/build-web.mjs` lifts
+`createCollector()` out of `ccstats.mjs` with `Function.prototype.toString()` rather than
+reimplementing it, then compiles it in an empty scope and asserts it agrees with the CLI byte for
+byte before writing anything. There is exactly one copy of the parse loop.
+
 ## Requirements
 
 Node 18 or newer. That's it. No install step, no dependencies, no network access — not from the
@@ -114,12 +142,24 @@ so the output works from `file://` and offline.
 The generated `ccstats.html` does embed *your* numbers, though, so it is gitignored here. If you
 share one, know that you are sharing your day-by-day token counts and estimated spend.
 
+The hosted version holds to the same line. Your files are read by the browser itself, the page
+declares `default-src 'none'` with no outbound channel, and the deploy has no backend to receive
+anything — so you can confirm it in the network tab rather than take our word for it. The
+*Send feedback* action is a link, not a submission: it opens GitHub's issue form with a template
+already in it, and the report exists only once you have read it over and pressed submit there.
+
 ## Costs are estimates
 
 Prices are hardcoded list rates per model, applied to the token counts in your transcripts.
-Subscription allowances, discounts, and batch pricing are **not** modeled, so this is not a bill —
-it is what the same work would cost at API list price. Override rates via `pricing` in the config
+Subscription allowances and negotiated discounts are **not** modeled, so this is not a bill — it
+is what the same work would cost at API list price. Override rates via `pricing` in the config
 file if yours differ.
+
+Every figure on the page is priced at **standard** rates. The one exception is the *how it was
+served* card, which applies the Fast Mode premium (2×) and the Batch API discount (0.5×) to its
+own rows — and says so inline whenever that makes its total differ from the rest of the page.
+Priority Tier has no published flat multiplier, so it gets its own row but is costed at standard
+rates rather than being given an invented number.
 
 ## Credits
 
