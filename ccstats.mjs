@@ -677,6 +677,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     .mrow .mmeta, .sphint, .pmnote b,
     #liveCost, #liveCount, #liveMeta,
     .cewrap .ceval, .cewrap .cepct, .cewrap .ceamt, .cewrap .cechips b, .cewrap .cechips span,
+    .burn .burnrow b, .burn .burnproj b, .burn .burnband,
     .foot, .irl-panel
   ) {
     filter: blur(6px); user-select: none; -webkit-user-select: none;
@@ -1464,6 +1465,40 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     vertical-align: 0; color: var(--accent);
   }
   .pmnote b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  /* --- range bar: the range control, moved out of the header ---------------------------------
+     Six options no longer fit beside refresh, the pricing lens, language, fullscreen and the theme
+     switch. The control drives the Models pane too, so it cannot live inside #overview; its own
+     full-width row under the header is the only place that is both always visible and not full. */
+  .rangebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .rangebar .ranges { flex-wrap: wrap; }
+  .rspan { font-size: 14px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* --- month-to-date burn: an annotation on the cost above it, not a card of its own ---------
+     Chip weight, not card weight, and the projected figure is --text while the real spend is
+     --accent. Measured against this repo's own transcripts the projection ran 3x low through a
+     late-month ramp, so it must never out-shout the fact it is derived from. */
+  .burn { margin-top: 12px; background: var(--chip); border-left: 3px solid var(--accent); border-radius: 8px; padding: 11px 14px; }
+  .burn .burnhead { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; color: var(--muted); }
+  .burn .burnhead .icon { width: 15px; height: 15px; color: var(--accent); }
+  .burn .burnrow { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 9px 0 8px; }
+  .burn .burnrow em { font-style: normal; display: inline-flex; align-items: baseline; gap: 6px; font-size: 14px; color: var(--muted); background: var(--card); border-radius: 8px; padding: 3px 9px; }
+  .burn .burnrow em b { font-weight: 800; color: var(--text); }
+  .burn .burnrow .burnnow b { color: var(--accent); }
+  .burn .burnproj { margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--muted); }
+  .burn .burnproj b { font-weight: 800; color: var(--text); }
+  .burn .burnband { display: block; font-size: 13px; margin-top: 2px; }
+  .burn-quiet { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+  .burn-quiet .icon { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; color: var(--accent); vertical-align: 0; }
+
+  /* --- narrow widths: the header sheds its labels before it sheds a row --------------------- */
+  @media (max-width: 640px) {
+    .rbtn { padding: 0 12px; }
+    .rbtn span { display: none; }
+    .rbtn svg { margin-right: 0; }
+    .ranges button { padding: 6px 11px; }
+    .rangebar { gap: 6px; }
+  }
 </style>
 </head>
 <body>
@@ -1538,11 +1573,6 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
         </svg>
         <span data-i18n="refresh">Refresh</span>
       </button>
-      <div class="ranges">
-        <button data-range="all" class="on" data-i18n="rAll">All</button>
-        <button data-range="30" data-i18n="r30">30d</button>
-        <button data-range="7" data-i18n="r7">7d</button>
-      </div>
       <!-- reuses .ranges chrome; the on-state and both tooltips are set from priceMode in
            applyStatic, so a persisted choice is already correct on first paint -->
       <div class="ranges pmswitch" id="pmswitch">
@@ -1582,6 +1612,18 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     </div>
   </div>
 
+  <div class="rangebar">
+    <div class="ranges">
+      <button data-range="all" class="on" data-i18n="rAll">All</button>
+      <button data-range="90" data-i18n="r90">90d</button>
+      <button data-range="30" data-i18n="r30">30d</button>
+      <button data-range="7" data-i18n="r7">7d</button>
+      <button data-range="mtd" data-i18n="rMtd">This month</button>
+      <button data-range="lastm" data-i18n="rLastm">Last month</button>
+    </div>
+    <span class="rspan" id="rangespan"></span>
+  </div>
+
   <div id="overview">
     <div class="coststrip" id="coststrip">
       <div>
@@ -1600,6 +1642,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     </div>
     <div id="pmnote"></div>
     <div id="pricewarn"></div>
+    <div id="burn"></div>
     <div class="cewrap" id="cache"></div>
     <div class="cards" id="cards"></div>
     <div class="heatwrap"><div class="heat" id="heat"></div></div>
@@ -1630,6 +1673,24 @@ const LANGS = {
     tipTabModels: "Spend and tokens per model.",
     today: "Today", refresh: "Refresh",
     rAll: "All", r30: "30d", r7: "7d",
+    r90: "90d", rMtd: "This month", rLastm: "Last month",
+    tipRangeMtd: "The 1st of this month to today.",
+    tipRangeLastm: "All of last calendar month.",
+    ofMonth: (m) => "(" + m + ")",
+    spanRange: (a, b) => a + " – " + b,
+    chartPeakIn: (label, peak) => label + " · peak " + peak,
+    burnTitle: (m) => m + " so far",
+    burnElapsed: (d, n) => "day " + d + " of " + n,
+    burnSpent: "Spent", burnRate: "Per day",
+    burnPace: (amt, end) => "On this pace, " + amt + " by " + end + ".",
+    burnBand: (lo, hi) => "Your quieter and busier days so far put it between " + lo + " and " + hi + ".",
+    burnTip: "Spend so far against the part of the month you have actually lived. The bar reads both ways: how much of the month has gone, and how much of the projection is already spent.",
+    burnTipSpent: "Real spend from the 1st to now — the one figure here that is not an estimate.",
+    burnTipRate: "Spend so far divided by elapsed days, counting today as the fraction of a day it currently is.",
+    burnTipProj: "The pace above, carried to the end of the month. It only holds if the rest of the month looks like the part already lived — a busy final week will beat it badly. A direction, not a forecast.",
+    burnEarly: (m) => "Too little of " + m + " has gone by to read a pace from. This fills in after the 5th.",
+    burnSparse: (m) => "Only a couple of active days in " + m + " so far — not enough to project from.",
+    burnNone: (m) => "Nothing billed in " + m + " yet.",
     tipRange: (r) => (r === "all" ? "Every day on record." : "The last " + r + " days."),
     tipRefresh: "Recompute from the latest data and replay the animations.",
     tipTheme: "Light / dark.",
@@ -1823,6 +1884,24 @@ const LANGS = {
     tipTabModels: "모델별 지출과 토큰.",
     today: "오늘", refresh: "새로고침",
     rAll: "전체", r30: "30일", r7: "7일",
+    r90: "90일", rMtd: "이번 달", rLastm: "지난달",
+    tipRangeMtd: "이번 달 1일부터 오늘까지.",
+    tipRangeLastm: "지난달 한 달 전체.",
+    ofMonth: (m) => "(" + m + ")",
+    spanRange: (a, b) => a + " – " + b,
+    chartPeakIn: (label, peak) => label + " · 최고 " + peak,
+    burnTitle: (m) => m + " 현재까지",
+    burnElapsed: (d, n) => n + "일 중 " + d + "일째",
+    burnSpent: "사용액", burnRate: "하루 평균",
+    burnPace: (amt, end) => "이 속도라면 " + end + "까지 " + amt + ".",
+    burnBand: (lo, hi) => "지금까지의 한산한 날과 바쁜 날을 기준으로 하면 " + lo + " ~ " + hi + " 사이입니다.",
+    burnTip: "실제로 지나간 기간을 기준으로 한 이번 달 사용액입니다. 막대는 두 가지를 함께 나타냅니다. 한 달 중 지나간 비율이자, 예상치 중 이미 쓴 비율입니다.",
+    burnTipSpent: "1일부터 지금까지의 실제 사용액입니다. 이 카드에서 추정치가 아닌 유일한 숫자입니다.",
+    burnTipRate: "지금까지의 사용액을 경과 일수로 나눈 값입니다. 오늘은 지나간 만큼만 계산합니다.",
+    burnTipProj: "위의 속도를 월말까지 그대로 이어간 값입니다. 남은 기간이 지금까지와 비슷할 때만 맞습니다. 마지막 주가 바쁘면 크게 빗나갑니다. 예보가 아니라 방향으로 보세요.",
+    burnEarly: (m) => m + "은(는) 아직 지난 기간이 짧아 속도를 읽을 수 없습니다. 5일 이후에 표시됩니다.",
+    burnSparse: (m) => m + "에 활동한 날이 아직 며칠뿐이라 예측하기에는 부족합니다.",
+    burnNone: (m) => m + "에는 아직 청구된 사용량이 없습니다.",
     tipRange: (r) => (r === "all" ? "기록된 모든 날." : "최근 " + r + "일."),
     tipRefresh: "최신 데이터로 다시 계산하고 애니메이션을 처음부터 재생합니다.",
     tipTheme: "밝게 / 어둡게.",
@@ -2020,6 +2099,24 @@ const LANGS = {
     tipTabModels: "モデルごとの支出とトークン。",
     today: "今日", refresh: "更新",
     rAll: "全期間", r30: "30日", r7: "7日",
+    r90: "90日", rMtd: "今月", rLastm: "先月",
+    tipRangeMtd: "今月1日から今日まで。",
+    tipRangeLastm: "先月のひと月すべて。",
+    ofMonth: (m) => "(" + m + ")",
+    spanRange: (a, b) => a + " – " + b,
+    chartPeakIn: (label, peak) => label + " · ピーク " + peak,
+    burnTitle: (m) => m + "の現在まで",
+    burnElapsed: (d, n) => n + "日中 " + d + "日目",
+    burnSpent: "使用額", burnRate: "1日あたり",
+    burnPace: (amt, end) => "このペースなら " + end + "までに " + amt + "。",
+    burnBand: (lo, hi) => "これまでの静かな日と忙しい日を当てはめると " + lo + " 〜 " + hi + " の範囲です。",
+    burnTip: "実際に経過した日数に対する今月の使用額です。バーは二つの意味を持ちます。ひと月のうち経過した割合であり、見込み額のうちすでに使った割合でもあります。",
+    burnTipSpent: "1日から現在までの実際の使用額。このカードで唯一、推定ではない数値です。",
+    burnTipRate: "これまでの使用額を経過日数で割った値です。今日は経過した分だけを数えます。",
+    burnTipProj: "上のペースをそのまま月末まで伸ばした値です。残りの期間がこれまでと似ている場合にのみ成り立ちます。最終週が忙しければ大きく外れます。予報ではなく方向として見てください。",
+    burnEarly: (m) => m + "はまだ経過が浅く、ペースを読めません。5日を過ぎると表示されます。",
+    burnSparse: (m) => m + "の稼働日がまだ数日だけで、予測するには足りません。",
+    burnNone: (m) => m + "はまだ課金された利用がありません。",
     tipRange: (r) => (r === "all" ? "記録のあるすべての日。" : "直近" + r + "日間。"),
     tipRefresh: "最新のデータで再計算し、アニメーションを最初から再生します。",
     tipTheme: "ライト / ダーク。",
@@ -2199,6 +2296,24 @@ const LANGS = {
     tipTabModels: "各模型的花费与 token。",
     today: "今天", refresh: "刷新",
     rAll: "全部", r30: "30天", r7: "7天",
+    r90: "90天", rMtd: "本月", rLastm: "上月",
+    tipRangeMtd: "本月 1 日至今天。",
+    tipRangeLastm: "上一个自然月的全部日期。",
+    ofMonth: (m) => "(" + m + ")",
+    spanRange: (a, b) => a + " – " + b,
+    chartPeakIn: (label, peak) => label + " · 峰值 " + peak,
+    burnTitle: (m) => m + "至今",
+    burnElapsed: (d, n) => "第 " + d + " 天 / 共 " + n + " 天",
+    burnSpent: "已花费", burnRate: "每天",
+    burnPace: (amt, end) => "按此速度，到 " + end + " 约为 " + amt + "。",
+    burnBand: (lo, hi) => "按目前较清闲和较忙碌的日子推算，区间为 " + lo + " 至 " + hi + "。",
+    burnTip: "本月已花费的金额，对照实际已经过去的天数。这条进度条有两重含义：本月已过去的比例，也是预估总额中已经花掉的比例。",
+    burnTipSpent: "从 1 日到现在的真实花费——这张卡片上唯一不是估算的数字。",
+    burnTipRate: "已花费金额除以已过天数，今天按已经过去的部分计入。",
+    burnTipProj: "把上面的速度延续到月底。只有当剩下的日子和已经过去的相似时才成立；最后一周若很忙，这个数会差很多。请当作方向，而不是预报。",
+    burnEarly: (m) => m + "过去的时间还太短，读不出速度。5 日之后才会显示。",
+    burnSparse: (m) => m + "到目前只有寥寥几个活跃日，不足以推算。",
+    burnNone: (m) => m + "还没有产生任何计费用量。",
     tipRange: (r) => (r === "all" ? "有记录的所有日期。" : "最近 " + r + " 天。"),
     tipRefresh: "用最新数据重新计算，并从头播放动画。",
     tipTheme: "浅色 / 深色。",
@@ -2378,6 +2493,24 @@ const LANGS = {
     tipTabModels: "Gasto y tokens por modelo.",
     today: "Hoy", refresh: "Actualizar",
     rAll: "Todo", r30: "30d", r7: "7d",
+    r90: "90d", rMtd: "Este mes", rLastm: "Mes pasado",
+    tipRangeMtd: "Del día 1 de este mes hasta hoy.",
+    tipRangeLastm: "Todo el mes natural anterior.",
+    ofMonth: (m) => "(" + m + ")",
+    spanRange: (a, b) => a + " – " + b,
+    chartPeakIn: (label, peak) => label + " · máximo " + peak,
+    burnTitle: (m) => m + " hasta ahora",
+    burnElapsed: (d, n) => "día " + d + " de " + n,
+    burnSpent: "Gastado", burnRate: "Por día",
+    burnPace: (amt, end) => "A este ritmo, " + amt + " para el " + end + ".",
+    burnBand: (lo, hi) => "Tus días más tranquilos y más intensos hasta ahora lo sitúan entre " + lo + " y " + hi + ".",
+    burnTip: "Lo gastado en el mes frente a la parte del mes que realmente ha transcurrido. La barra dice las dos cosas: cuánto mes ha pasado y cuánto de la estimación ya se ha gastado.",
+    burnTipSpent: "Gasto real del día 1 hasta ahora: la única cifra de esta tarjeta que no es una estimación.",
+    burnTipRate: "Lo gastado dividido entre los días transcurridos, contando hoy como la fracción de día que lleva.",
+    burnTipProj: "El ritmo de arriba llevado hasta fin de mes. Solo se sostiene si el resto del mes se parece a lo ya vivido; una última semana intensa lo deja muy corto. Una dirección, no un pronóstico.",
+    burnEarly: (m) => "Ha pasado muy poco de " + m + " para leer un ritmo. Aparece a partir del día 5.",
+    burnSparse: (m) => "Solo un par de días activos en " + m + " por ahora: insuficiente para proyectar.",
+    burnNone: (m) => "Todavía no hay nada facturado en " + m + ".",
     tipRange: (r) => (r === "all" ? "Todos los días registrados." : "Últimos " + r + " días."),
     tipRefresh: "Recalcula con los datos más recientes y repite las animaciones.",
     tipTheme: "Claro / oscuro.",
@@ -2709,6 +2842,7 @@ const ICONS = {
   gauge: '<path d="M3.34 19a10 10 0 1 1 17.32 0"/><circle cx="12" cy="15" r="2.5"/><path d="M13.8 13.2 18 8"/>',
   pie: '<circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/>',
   bars: '<rect x="3" y="10" width="5" height="11" rx="1"/><rect x="10" y="4" width="5" height="17" rx="1"/><rect x="17" y="14" width="5" height="7" rx="1"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
 };
 const icon = (n) => '<svg class="icon" viewBox="0 0 24 24">' + ICONS[n] + "</svg>";
 
@@ -2733,11 +2867,94 @@ let cmpOpen = localStorage.getItem("ccstats-today-cmp") === "1";
 // transcript actually recorded. Standard is the default because it never has to approximate.
 let priceMode = localStorage.getItem("ccstats-price-mode") === "billed" ? "billed" : "standard";
 
-function keysInRange() {
-  if (range === "all") return dayKeys;
+// --- the selected range, resolved to a concrete window ---------------------------------------
+//
+// Day counts and calendar months are different shapes, so nothing reads the range id
+// arithmetically any more. Every consumer asks rangeWindow() for {from, to, days} instead, and both
+// shapes answer the same question. The id stays an opaque string so the [data-range] buttons, the
+// .on toggle and applyStatic's document-wide scan all keep working unchanged.
+const RANGES = {
+  all:   { kind: "all" },
+  "90":  { kind: "days", days: 90 },
+  "30":  { kind: "days", days: 30 },
+  "7":   { kind: "days", days: 7 },
+  mtd:   { kind: "month", back: 0 },
+  lastm: { kind: "month", back: 1 },
+};
+const ymdOf = (d) =>
+  d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+// Inclusive span. Rounding the millisecond difference is what keeps a 23- or 25-hour DST day from
+// costing or gaining a day here.
+const daySpan = (a, b) => Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 864e5) + 1;
+
+function rangeWindow() {
+  const spec = RANGES[range] || RANGES.all;
+  const today = todayKey();
+  if (spec.kind === "month") {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth() - spec.back, 1);
+    // day 0 of the next month is the last day of this one, and it handles February and leap years
+    // without a table
+    const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+    const from = ymdOf(first), monthEnd = ymdOf(last);
+    return {
+      kind: "month", from: from, to: monthEnd < today ? monthEnd : today,
+      days: daySpan(from, monthEnd < today ? monthEnd : today),
+      monthEnd: monthEnd, monthDays: last.getDate(),
+    };
+  }
+  if (spec.kind === "all") {
+    const from = dayKeys.length ? dayKeys[0] : today;
+    return { kind: "all", from: from, to: today, days: daySpan(from, today) };
+  }
   const cut = new Date(); cut.setHours(0, 0, 0, 0);
-  cut.setDate(cut.getDate() - (Number(range) - 1));
-  return dayKeys.filter((k) => new Date(k + "T00:00:00") >= cut);
+  cut.setDate(cut.getDate() - (spec.days - 1));
+  return { kind: "days", from: ymdOf(cut), to: today, days: spec.days };
+}
+
+function keysInRange() {
+  const w = rangeWindow();
+  // "All" means every key on record, including one dated in the future by a skewed clock. A window
+  // filter would silently drop it, which is not what the word means.
+  if (w.kind === "all") return dayKeys;
+  // Day keys are zero-padded ISO, so lexicographic order is chronological order — cheaper and
+  // exactly equivalent to the Date construction this replaces.
+  return dayKeys.filter((k) => k >= w.from && k <= w.to);
+}
+
+// The month a window sits in, in the reader's language. The year is added only when it differs from
+// the current one, so "Last month" in January reads "December 2025" rather than a bare "December"
+// that could be either.
+function monthLabel(w) {
+  const d = new Date(w.from + "T12:00:00");
+  return d.toLocaleDateString(T("locale"),
+    d.getFullYear() === new Date().getFullYear() ? { month: "long" } : { month: "long", year: "numeric" });
+}
+
+// The resolved window as dates, shown beside the buttons. It is what disambiguates "Last month"
+// without putting a year inside the chip.
+function rangeSpanLabel() {
+  if (!dayKeys.length) return "";
+  const w = rangeWindow(), o = { month: "short", day: "numeric" };
+  const a = new Date(w.from + "T12:00:00").toLocaleDateString(T("locale"), o);
+  const b = new Date(w.to + "T12:00:00").toLocaleDateString(T("locale"), o);
+  return a === b ? a : T("spanRange", a, b);
+}
+
+// Scope wording for copied text. copyLabel() only ever sees "all" or a day count, so its arity and
+// its five translations are left alone.
+function rangeScopeLabel() {
+  const w = rangeWindow();
+  if (w.kind === "month") return monthLabel(w);
+  return T("copyLabel", w.kind === "all" ? "all" : String(w.days));
+}
+
+// tipRange() interpolates its argument as a day count, so the two month ids get their own keys
+// rather than being forced through it.
+function rangeTip(id) {
+  if (id === "mtd") return T("tipRangeMtd");
+  if (id === "lastm") return T("tipRangeLastm");
+  return T("tipRange", id);
 }
 
 function aggregate(keys) {
@@ -2948,8 +3165,10 @@ function render() {
   const peak = a.hours.some((h) => h) ? a.hours.indexOf(Math.max(...a.hours)) : null;
   const fav = Object.entries(a.models).sort((x, y) => mTok(y[1]) - mTok(x[1]))[0];
 
+  const w = rangeWindow();
   document.getElementById("costrange").textContent =
-    range === "all" ? T("ofAll") : T("ofDays", range);
+    w.kind === "month" ? T("ofMonth", monthLabel(w)) : w.kind === "all" ? T("ofAll") : T("ofDays", w.days);
+  document.getElementById("rangespan").textContent = rangeSpanLabel();
   // applyStatic() resets this pair from data-i18n / data-tip-key, and it runs before render() both
   // on boot and on every language switch — so the lens-dependent wording is written here, last,
   // and wins in either order.
@@ -2993,6 +3212,9 @@ function render() {
   renderToday();
   rollBook();
   renderModels(a);
+  // Reads only days already inside the range, so unlike rollBook it cannot add a model to the
+  // unpriced set after renderPriceWarning has painted.
+  renderBurn();
 }
 
 // --- cache efficiency ---------------------------------------------------------------------
@@ -3065,8 +3287,13 @@ function renderCache(a) {
 }
 
 function renderChart() {
-  const n = range === "all" ? 45 : Number(range);
-  const tk = todayKey();
+  const w = rangeWindow();
+  // "All" stays capped: 45 bars is the most an 800px column can draw and still leave each bar wide
+  // enough to hover. Every other range draws its own length.
+  const n = w.kind === "all" ? 45 : w.days;
+  // Walk back from the window's last day, not from today — "Last month" ends in the past, and
+  // anchoring on today would draw a chart describing a different window than the totals above it.
+  const tk = w.to;
   let max = 0;
   const list = [];
   for (let i = n - 1; i >= 0; i--) {
@@ -3075,7 +3302,9 @@ function renderChart() {
     list.push([k, v]);
     if (v > max) max = v;
   }
-  document.getElementById("cpeak").innerHTML = max ? T("chartPeak", n, exb(max)) : "";
+  document.getElementById("cpeak").innerHTML = max
+    ? (w.kind === "month" ? T("chartPeakIn", monthLabel(w), exb(max)) : T("chartPeak", n, exb(max)))
+    : "";
   document.getElementById("chart").innerHTML = list.map(([k, v], i) =>
     '<div class="bar' + (v === max && v > 0 ? " peakbar" : "") + (v === 0 ? " zero" : "") +
     '" data-k="' + k + '" style="height:' + (max && v ? Math.max((v / max) * 100, 2) : 1) +
@@ -3296,10 +3525,98 @@ function hourStats(d, k) {
   return out;
 }
 
+// --- month-to-date burn ----------------------------------------------------------------------
+//
+// Two facts and one conditional. Spend-to-date and spend-per-day are measured; the projection is
+// that pace carried forward, and it only holds if the rest of the month resembles the part already
+// lived. On this repo's own transcripts it did not: a ramp in the last week of July took a day-20
+// projection of about $930 to over $3,000. So the projection is stated as a sentence rather than a
+// figure, carries an empirical band, and is drawn in --text while the real spend keeps --accent.
+// An estimate must not out-shout the fact it came from.
+//
+// The band is the 25th and 75th percentile of the daily spends so far, applied to the days that
+// remain. A standard-error band was built and measured first and never once contained the truth; it
+// assumes exchangeable daily draws, and the failure mode here is a level shift. Quartiles make no
+// distributional claim, and because idle days sit in the sample the low end usually collapses to
+// exactly month-to-date, which is a hard floor rather than a model output.
+function burnStats() {
+  const w = rangeWindow();
+  // Only ever the current calendar month. Under any other range the figure would describe a
+  // different window than the cost above it, silently.
+  if (w.kind !== "month" || w.monthEnd < todayKey()) return null;
+  const now = new Date();
+  const dom = now.getDate();
+  // Today is only partly lived. Counting it as a whole day understates the pace, and does so worst
+  // early in the month, which is exactly when the projection is shakiest.
+  const elapsed = dom - 1 + (now.getHours() * 60 + now.getMinutes()) / 1440;
+  // The daily sample excludes today for the same reason: a partial day is a biased-low draw.
+  const per = [];
+  for (let i = 1; i < dom; i++) {
+    const k = w.from.slice(0, 8) + String(i).padStart(2, "0");
+    per.push(DATA.days[k] ? dayCost(k) : 0);
+  }
+  const mtd = keysInRange().reduce((s, k) => s + dayCost(k), 0);
+  if (!(mtd > 0)) return { state: "empty", w: w };
+  // The projection multiplies by monthDays/elapsed — 15x on the 2nd, where one unusual session
+  // moves the whole month by 15x its own size. Five elapsed days is where that stops being absurd.
+  if (elapsed < 5 || per.length < 5) return { state: "early", w: w };
+  // Two samples cannot tell a level from a spike.
+  if (per.filter((c) => c > 0).length < 3) return { state: "sparse", w: w };
+  const rate = mtd / elapsed;
+  const remain = w.monthDays - elapsed;
+  const projected = mtd + rate * remain;
+  const sorted = per.slice().sort((a, b) => a - b);
+  const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+  return {
+    state: "ok", w: w, mtd: mtd, rate: rate, dom: dom, projected: projected,
+    lo: Math.min(projected, Math.max(mtd, mtd + q(0.25) * remain)),
+    hi: Math.max(projected, mtd + q(0.75) * remain),
+    // elapsed/monthDays is algebraically identical to mtd/projected, so one bar says both "how much
+    // of the month has gone" and "how much of the projection is already spent"
+    pct: Math.min(100, (elapsed / w.monthDays) * 100),
+  };
+}
+
+function renderBurn() {
+  const host = document.getElementById("burn");
+  if (!host) return;
+  const b = burnStats();
+  if (!b) { host.innerHTML = ""; return; }
+  const mn = monthLabel(b.w);
+  if (b.state !== "ok") {
+    host.innerHTML = '<div class="burn burn-quiet">' + icon("calendar") + "<span>" +
+      T(b.state === "empty" ? "burnNone" : b.state === "early" ? "burnEarly" : "burnSparse", mn) +
+      "</span></div>";
+    return;
+  }
+  const endLabel = new Date(b.w.monthEnd + "T12:00:00")
+    .toLocaleDateString(T("locale"), { month: "short", day: "numeric" });
+  // A band that has collapsed says nothing worth a sentence.
+  const band = b.hi - b.lo < 0.01 ? "" :
+    '<span class="burnband">' + T("burnBand", fmtUsd(b.lo), fmtUsd(b.hi)) + "</span>";
+  host.innerHTML =
+    '<div class="burn">' +
+    '<div class="burnhead"><span data-tip="' + attr(T("burnTip")) + '">' + icon("calendar") + " " +
+    T("burnTitle", mn) + '</span><span>' + T("burnElapsed", b.dom, b.w.monthDays) + "</span></div>" +
+    '<div class="burnrow">' +
+    '<em class="burnnow" data-tip="' + attr(T("burnTipSpent")) + '">' + T("burnSpent") +
+    " <b>" + fmtUsdCents(b.mtd) + "</b></em>" +
+    '<em data-tip="' + attr(T("burnTipRate")) + '">' + T("burnRate") +
+    " <b>" + fmtUsdCents(b.rate) + "</b></em>" +
+    "</div>" +
+    '<div class="bar"><i style="width:' + b.pct.toFixed(1) + '%"></i></div>' +
+    '<p class="burnproj" data-tip="' + attr(T("burnTipProj")) + '">' +
+    // fmtUsd, not fmtUsdCents: a projection carried to the cent is false precision.
+    T("burnPace", "<b>" + fmtUsd(b.projected) + "</b>", endLabel) + " " + band + "</p>" +
+    "</div>";
+}
+
 function renderHeat(keys) {
   const heat = document.getElementById("heat");
-  const end = new Date(); end.setHours(0, 0, 0, 0);
-  const totalDays = range === "all" ? Math.max(daysBetween(dayKeys[0]), 26 * 7) : Number(range);
+  const w = rangeWindow();
+  // the window's last day, at local midnight — for "Last month" that is not today
+  const end = new Date(w.to + "T00:00:00");
+  const totalDays = w.kind === "all" ? Math.max(daysBetween(dayKeys[0]), 26 * 7) : w.days;
   const start = new Date(end); start.setDate(start.getDate() - (totalDays - 1));
   start.setDate(start.getDate() - start.getDay()); // align to Sunday
 
@@ -3426,7 +3743,8 @@ function walletHTML(a) {
   if (!rows.length) return "";
   const top = rows;
   if (walletSel >= top.length) walletSel = 0;
-  const rangeLabel = range === "all" ? T("wAll") : T("wDays", range);
+  const w = rangeWindow();
+  const rangeLabel = w.kind === "month" ? monthLabel(w) : w.kind === "all" ? T("wAll") : T("wDays", w.days);
   // Real cents for the odometer. Floor to whole cents first so the dollar part and the
   // reels come from one number — rounding the dollars separately (fmtUsd rounds at >=100)
   // would let "$1,404" sit next to cents belonging to 1403.96.
@@ -3992,7 +4310,7 @@ function applyStatic() {
   paintLangPicks();
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = T(el.dataset.i18n); });
   document.querySelectorAll("[data-tip-key]").forEach((el) => { el.dataset.tip = T(el.dataset.tipKey); });
-  document.querySelectorAll("[data-range]").forEach((b) => { b.dataset.tip = T("tipRange", b.dataset.range); });
+  document.querySelectorAll("[data-range]").forEach((b) => { b.dataset.tip = rangeTip(b.dataset.range); });
   document.querySelectorAll("[data-pm]").forEach((b) => {
     b.classList.toggle("on", b.dataset.pm === priceMode);
     b.dataset.tip = T(b.dataset.pm === "billed" ? "pmTipBilled" : "pmTipStandard");
@@ -4191,7 +4509,7 @@ function copyContext(el) {
         mcost += mCost(m, e2) * billedMult(k, m);
       }
     }
-    const scope = todayModel ? T("copyScopeToday") : T("copyLabel", range);
+    const scope = todayModel ? T("copyScopeToday") : rangeScopeLabel();
     return { label: pretty(m), text: T("copyModel", pretty(m), scope, fmtUsdCents(mcost),
       // v.cw is 5-minute writes only; the 1-hour tier is a separate field. Reporting the bare
       // v.cw here left the four components short of the total they sit next to — on real data
@@ -4219,7 +4537,7 @@ function copyContext(el) {
   if (cardEl) {
     const label = cardEl.querySelector(".label").textContent;
     const value = cardEl.querySelector(".value").textContent;
-    return { label, text: T("copyCard", label, value, T("copyLabel", range)) };
+    return { label, text: T("copyCard", label, value, rangeScopeLabel()) };
   }
 
   if (at("#today")) {
@@ -4233,7 +4551,7 @@ function copyContext(el) {
   const keys = keysInRange();
   const a = aggregate(keys), st = streaks(keys);
   const fav = Object.entries(a.models).sort((x, y) => mTok(y[1]) - mTok(x[1]))[0];
-  return { label: null, text: T("copySummary", T("copyLabel", range), fmtUsd(a.cost), fmt(a.tokens),
+  return { label: null, text: T("copySummary", rangeScopeLabel(), fmtUsd(a.cost), fmt(a.tokens),
     a.msgs.toLocaleString(), a.sessions, a.activeDays, st.cur, st.max, fav ? pretty(fav[0]) : "") };
 }
 
