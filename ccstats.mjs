@@ -112,6 +112,18 @@ const seenMsg = new Set(); // dedup message counting (uuid)
 const models = new Set();
 let files = 0, lines = 0, badLines = 0;
 
+// Sessions live here rather than inside days because they cross midnight: 7 of this machine's 43
+// do, and the two heaviest span 11 and 6 calendar days. A per-day bucket would report each half as
+// its own session and could not express a start, a duration or a span at all. day.sessions stays
+// exactly as it is — "how many distinct sessions touched this day" is a different question, and
+// still the right one for the day-keyed views.
+const sess = {};
+const getSess = (h) => (sess[h] ??= { models: {}, req: 0, t0: 0, t1: 0, days: new Set() });
+// Days roll off the window; sessions never do, which makes this the one part of the payload with
+// no natural ceiling. Keep the heaviest, report how many there really were, and let the single-file
+// page stay a single file: 200 sessions measured at 23 KB against 124 bytes each.
+const SESSION_CAP = 200;
+
 // hm: hour -> model -> [i,o,cw,cr]. Sparse (only hours that actually billed) and keyed by model
 // because cost per token spans 12x between the priciest and cheapest models — an hourly bar
 // built from a blended day rate would be visibly wrong on any mixed-model hour.
@@ -140,10 +152,22 @@ addFile(id, text) {
     if (!o.timestamp) continue;
     const d = new Date(o.timestamp);
     if (isNaN(d)) continue;
-    const day = getDay(dayKey(d));
+    const dk = dayKey(d);
+    const day = getDay(dk);
 
     // hashed, never the raw id — see shortHash
-    if (o.sessionId) day.sessions.add(hashSessions ? shortHash(o.sessionId) : o.sessionId);
+    const sid = o.sessionId ? (hashSessions ? shortHash(o.sessionId) : o.sessionId) : "";
+    if (sid) {
+      day.sessions.add(sid);
+      const s = getSess(sid);
+      const ms = d.getTime();
+      // Min/max rather than assign-in-order: resume and fork replay a session's history into a
+      // fresh transcript, and readdirSync hands the files over in whatever order it likes, so the
+      // first record seen is not the first record that happened.
+      if (!s.t0 || ms < s.t0) s.t0 = ms;
+      if (ms > s.t1) s.t1 = ms;
+      s.days.add(dk);
+    }
 
     // the fallback key uses only the file path's hash, so no path ever reaches the output
     const uuid = o.uuid || shortHash(id) + ":" + o.timestamp + ":" + o.type;
@@ -197,6 +221,16 @@ addFile(id, text) {
           const sm = (sb[model] ??= [0, 0, 0, 0, 0, 0]);
           for (let n = 0; n < 5; n++) sm[n] += vals[n];
           sm[5]++;
+
+          // Inside the seenUsage guard with every other token bucket. Outside it this would count
+          // content blocks instead of requests and come out 2.45x high on real data.
+          if (sid) {
+            const ss = getSess(sid);
+            const se = (ss.models[model] ??= [0, 0, 0, 0, 0, 0]);
+            for (let n = 0; n < 5; n++) se[n] += vals[n];
+            se[5]++;
+            ss.req++;
+          }
         }
       }
     }
@@ -213,6 +247,28 @@ return {
   roots: meta.roots || 0,       // count only — the paths themselves are not shipped
   models: [...models].sort(),
   config: meta.config || { accent: null, lang: null, theme: null, currency: null, pricing: null, modelNames: null },
+  // Ranked by tokens, not cost: this closure is compiled in an empty scope for the browser and has
+  // no pricing table, nor may it grow one. At a cap of 200 against a card that draws 8, the two
+  // orderings only diverge deep in a tail the UI never reaches.
+  sessions: Object.fromEntries(
+    Object.entries(sess)
+      .map(([h, s]) => [h, s, Object.values(s.models).reduce((t, a) => t + a[0] + a[1] + a[2] + a[3] + a[4], 0)])
+      .sort((a, b) => b[2] - a[2] || a[0].localeCompare(b[0]))
+      .slice(0, SESSION_CAP)
+      .map(([h, s]) => [h, {
+        // Epoch MINUTES, floored. Seconds buy nothing a row can show, and flooring rather than
+        // rounding keeps the rendered start inside the same local day the day key put it in — a
+        // 23:59:50 start must not print as the next morning.
+        t0: Math.floor(s.t0 / 60000),
+        dur: Math.floor((s.t1 - s.t0) / 60000),
+        days: s.days.size,
+        req: s.req,
+        models: s.models,
+      }])
+  ),
+  // The denominator behind "top N of M". The cap above is a display budget, not a claim that these
+  // were all the sessions there were.
+  sessionsSeen: Object.keys(sess).length,
   days: Object.fromEntries(
     Object.entries(days)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -1472,6 +1528,14 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
      full-width row under the header is the only place that is both always visible and not full. */
   .rangebar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
   .rangebar .ranges { flex-wrap: wrap; }
+
+  /* --- costliest sessions: the .mrow shell, but the name is a date range ------------------
+     Five fields in the meta line against a name that is a whole timestamp is more than one line
+     can hold on a narrow window, so the two halves wrap onto their own lines instead of crushing
+     each other. .mrow .mmeta is already in the redacted list, so the money blurs for free; the
+     date deliberately does not, for the same reason the heatmap stays legible. */
+  .srow .mtop { flex-wrap: wrap; gap: 4px 12px; }
+  .srow .mname { font-variant-numeric: tabular-nums; }
   .rspan { font-size: 14px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 
   /* --- month-to-date burn: an annotation on the cost above it, not a card of its own ---------
@@ -1783,6 +1847,17 @@ const LANGS = {
     pmCopyNote: "priced as billed",
     spInvite: (adj) => "Priced as billed, this range comes to " + adj + ". The switch in the header applies that to every figure on the page.",
     spNames: { fast: "Fast Mode", standard: "Standard", batch: "Batch API", priority: "Priority Tier", unknown: "Not recorded" },
+    unitReqs: "requests",
+    sessTitle: "Costliest sessions",
+    sessTip: "Every billed request in one conversation, added up. Figures are whole-session, so a session that ran partly outside this range still shows what all of it cost. A session is named by when it ran — the id is a one-way hash and is never shown.",
+    sessActive: (n) => "active on " + n + " days",
+    sessFoot: (shown, total) => "Top " + shown + " of " + total + " sessions in this range, by estimated cost.",
+    sessSpill: (n, scope) => n + " of these ran partly outside " + scope + "; the figures still cover the whole session.",
+    sessCap: (kept, seen) => "Only the " + kept + " heaviest of " + seen + " sessions are kept in this file.",
+    durParts: { d: "d", h: "h", m: "m" },
+    copySession: (when, len, cost, tok, req, days, top) =>
+      "ccstats session " + when + " (" + len + "): " + cost + " · " + tok + " tokens · " + req +
+      " requests · " + days + " days · top model " + top,
     ctxCopy: "Copy summary", ctxExport: "Export JSON", ctxTheme: "Toggle theme",
     ctxBook: "Reroll book", ctxParty: "Party mode", ctxLang: "한국어",
     ctxHello: "What is this?",
@@ -2002,6 +2077,17 @@ const LANGS = {
     pmCopyNote: "실청구 기준",
     spInvite: (adj) => "실청구 기준으로는 이 기간이 " + adj + "입니다. 상단의 전환 버튼을 누르면 페이지의 모든 금액에 적용됩니다.",
     spNames: { fast: "Fast Mode", standard: "표준", batch: "Batch API", priority: "Priority Tier", unknown: "기록 없음" },
+    unitReqs: "요청",
+    sessTitle: "가장 비쌌던 세션",
+    sessTip: "한 대화에서 청구된 요청을 모두 합산한 값입니다. 세션 전체 기준이라 이 기간 밖까지 이어진 세션도 전체 비용을 그대로 보여줍니다. 세션은 실행된 시각으로 표시하며, 세션 id는 단방향 해시라 화면에 나오지 않습니다.",
+    sessActive: (n) => n + "일간 사용",
+    sessFoot: (shown, total) => "이 기간 세션 " + total + "개 중 추정 비용 상위 " + shown + "개입니다.",
+    sessSpill: (n, scope) => "이 중 " + n + "개는 " + scope + " 밖까지 이어졌고, 금액은 세션 전체 기준입니다.",
+    sessCap: (kept, seen) => "세션 " + seen + "개 중 사용량이 큰 " + kept + "개만 이 파일에 담겨 있습니다.",
+    durParts: { d: "일", h: "시간", m: "분" },
+    copySession: (when, len, cost, tok, req, days, top) =>
+      "ccstats 세션 " + when + " (" + len + "): " + cost + " · 토큰 " + tok + " · 요청 " + req +
+      "회 · " + days + "일 · 주 모델 " + top,
     ctxCopy: "요약 복사", ctxExport: "JSON 내보내기", ctxTheme: "테마 전환",
     ctxBook: "다른 책으로", ctxParty: "파티 모드", ctxLang: "English",
     ctxHello: "이게 뭔가요?",
@@ -2204,6 +2290,17 @@ const LANGS = {
     pmCopyNote: "実請求ベース",
     spInvite: (adj) => "実請求ベースでは、この期間は " + adj + " になります。ヘッダーの切り替えでページ全体の金額に適用されます。",
     spNames: { fast: "Fast Mode", standard: "標準", batch: "Batch API", priority: "Priority Tier", unknown: "記録なし" },
+    unitReqs: "リクエスト",
+    sessTitle: "費用の大きいセッション",
+    sessTip: "ひとつの会話で課金されたリクエストをすべて合計した値です。セッション単位の集計なので、この期間の外にまたがったセッションも全体の費用を表示します。セッションは実行時刻で表し、セッションIDは一方向ハッシュのため画面には出しません。",
+    sessActive: (n) => n + "日間利用",
+    sessFoot: (shown, total) => "この期間のセッション " + total + " 件のうち、推定費用の上位 " + shown + " 件です。",
+    sessSpill: (n, scope) => "うち " + n + " 件は" + scope + "の外にもまたがっており、金額はセッション全体の合計です。",
+    sessCap: (kept, seen) => "セッション " + seen + " 件のうち、使用量の大きい " + kept + " 件だけをこのファイルに保存しています。",
+    durParts: { d: "日", h: "時間", m: "分" },
+    copySession: (when, len, cost, tok, req, days, top) =>
+      "ccstats セッション " + when + " (" + len + "): " + cost + " · " + tok + " トークン · " + req +
+      " リクエスト · " + days + " 日 · 主なモデル " + top,
     unitTokens: "トークン", unitMsgs: "メッセージ", unitSessions: "セッション",
     ctxCopy: "サマリーをコピー", ctxExport: "JSONを書き出し", ctxTheme: "テーマ切り替え",
     ctxBook: "別の本にする", ctxParty: "パーティーモード", ctxLang: "日本語",
@@ -2401,6 +2498,17 @@ const LANGS = {
     pmCopyNote: "按实际计费",
     spInvite: (adj) => "按实际计费，该期间为 " + adj + "。顶部的开关会把它应用到本页所有金额。",
     spNames: { fast: "Fast Mode", standard: "标准", batch: "Batch API", priority: "Priority Tier", unknown: "未记录" },
+    unitReqs: "次请求",
+    sessTitle: "花费最高的会话",
+    sessTip: "把一次会话中所有计费请求加总。数字按整个会话统计，因此跨出该期间的会话仍会显示它全部的花费。会话以运行时间标识，会话 id 是单向哈希，不会显示出来。",
+    sessActive: (n) => "活跃 " + n + " 天",
+    sessFoot: (shown, total) => "该期间共 " + total + " 个会话，按预估花费列出前 " + shown + " 个。",
+    sessSpill: (n, scope) => "其中 " + n + " 个延伸到" + scope + "之外，金额仍是整个会话的合计。",
+    sessCap: (kept, seen) => "共 " + seen + " 个会话，文件中只保留用量最大的 " + kept + " 个。",
+    durParts: { d: "天", h: "小时", m: "分" },
+    copySession: (when, len, cost, tok, req, days, top) =>
+      "ccstats 会话 " + when + " (" + len + "): " + cost + " · " + tok + " token · " + req +
+      " 次请求 · " + days + " 天 · 主要模型 " + top,
     unitTokens: "token", unitMsgs: "条消息", unitSessions: "个会话",
     ctxCopy: "复制摘要", ctxExport: "导出 JSON", ctxTheme: "切换主题",
     ctxBook: "换一本书", ctxParty: "派对模式", ctxLang: "简体中文",
@@ -2598,6 +2706,17 @@ const LANGS = {
     pmCopyNote: "según factura",
     spInvite: (adj) => "Según factura, este periodo asciende a " + adj + ". El conmutador de la cabecera lo aplica a todas las cifras de la página.",
     spNames: { fast: "Fast Mode", standard: "Estándar", batch: "Batch API", priority: "Priority Tier", unknown: "Sin registrar" },
+    unitReqs: "peticiones",
+    sessTitle: "Sesiones más caras",
+    sessTip: "Todas las peticiones facturadas de una conversación, sumadas. Las cifras son de la sesión completa, así que una sesión que se salió de este periodo sigue mostrando lo que costó entera. Una sesión se identifica por cuándo se ejecutó — el id es un hash de un solo sentido y no se muestra nunca.",
+    sessActive: (n) => "activa " + n + " días",
+    sessFoot: (shown, total) => "Las " + shown + " sesiones más caras de las " + total + " de este periodo, por coste estimado.",
+    sessSpill: (n, scope) => "En " + n + " de ellas parte del trabajo quedó fuera de " + scope + "; las cifras cubren la sesión entera.",
+    sessCap: (kept, seen) => "De " + seen + " sesiones, en este archivo solo se guardan las " + kept + " de mayor uso.",
+    durParts: { d: "d", h: "h", m: "min" },
+    copySession: (when, len, cost, tok, req, days, top) =>
+      "ccstats sesión " + when + " (" + len + "): " + cost + " · " + tok + " tokens · " + req +
+      " peticiones · " + days + " días · modelo principal " + top,
     unitTokens: "tokens", unitMsgs: "mensajes", unitSessions: "sesiones",
     ctxCopy: "Copiar resumen", ctxExport: "Exportar JSON", ctxTheme: "Cambiar tema",
     ctxBook: "Otro libro", ctxParty: "Modo fiesta", ctxLang: "Español",
@@ -3902,6 +4021,90 @@ function speedHTML(a) {
     (plain ? '<div class="sphint">' + T("spHint") + "</div>" : "");
 }
 
+// --- costliest sessions --------------------------------------------------------------------
+//
+// A session is the unit a person actually remembers — "that refactor that ran all afternoon" — and
+// it is the one axis the day and model buckets cannot express, because sessions cross midnight.
+// The id is a one-way hash and is never drawn: a row is named by when it ran, how long it ran and
+// what it ran on, which is what makes it recognisable. The hash lives only in data-s, as a key for
+// the copy handler.
+const SESSIONS_SHOWN = 8;
+const sessDayKey = (min) => {
+  const d = new Date(min * 60000);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+};
+// The payload keeps each model as a packed array; every cost helper on this page takes the object
+// form, so inflate once here rather than teaching mCost a second shape.
+const sessModels = (s) => {
+  const out = {};
+  for (const [m, a] of Object.entries(s.models || {}))
+    out[m] = { i: a[0], o: a[1], cw: a[2], cr: a[3], c1h: a[4], msg: a[5] };
+  return out;
+};
+const sessCost = (s) => Object.entries(sessModels(s)).reduce((t, [m, v]) => t + mCost(m, v), 0);
+const sessTokens = (s) => Object.values(sessModels(s)).reduce((t, v) => t + mTok(v), 0);
+const sessDur = (mins) => {
+  const p = T("durParts");
+  if (mins < 60) return mins + p.m;
+  if (mins < 1440) return Math.floor(mins / 60) + p.h + " " + (mins % 60) + p.m;
+  return Math.floor(mins / 1440) + p.d + " " + Math.floor((mins % 1440) / 60) + p.h;
+};
+// One or the other, never both: on a session whose title already shows two dates, the duration is
+// that same fact restated, while the count of days it was actually active on is new — Jul 6 to
+// Jul 17 is twelve calendar days but only six of them billed.
+const sessLen = (s) => (s.days > 1 ? T("sessActive", s.days) : sessDur(s.dur));
+const sessWhen = (s) => {
+  const a = new Date(s.t0 * 60000), b = new Date((s.t0 + s.dur) * 60000);
+  const df = (x) => x.toLocaleDateString(T("locale"), { month: "short", day: "numeric" });
+  const tf = (x) => x.toLocaleTimeString(T("locale"), { hour: "numeric", minute: "2-digit" });
+  if (s.days > 1) return df(a) + " " + tf(a) + " → " + df(b) + " " + tf(b);
+  return a.toLocaleDateString(T("locale"), { weekday: "short", month: "short", day: "numeric" }) +
+    " · " + tf(a) + " – " + tf(b);
+};
+
+function sessionsHTML() {
+  const all = DATA.sessions || {};
+  const keys = keysInRange();
+  const lo = keys.length ? keys[0] : "", hi = keys.length ? keys[keys.length - 1] : "";
+  const spans = (s) => [sessDayKey(s.t0), sessDayKey(s.t0 + s.dur)];
+  // A session counts if any part of it lands in the window, and its figures are always
+  // whole-session. Filtering on the start day instead would drop the long session that began nine
+  // days ago and burned its money yesterday — the exact row this card exists to surface.
+  const inRange = Object.entries(all).filter(([, s]) => {
+    if (!s.req) return false;
+    if (range === "all") return true;
+    if (!keys.length) return false;
+    const [a, b] = spans(s);
+    return b >= lo && a <= hi;
+  });
+  if (!inRange.length) return "";
+  const ranked = inRange.map(([h, s]) => [h, s, sessCost(s)]).sort((x, y) => y[2] - x[2]);
+  const shown = ranked.slice(0, SESSIONS_SHOWN);
+  const max = shown[0][2] || 1;
+  // Whole-session totals mean these rows can out-sum the headline for the same range — on this
+  // machine's 7-day view by $256, all of it one 11-day session. Two totals on one screen that
+  // don't add up read as a bug, so say which rows did it.
+  const spill = range === "all" ? 0
+    : shown.filter(([, s]) => { const [a, b] = spans(s); return a < lo || b > hi; }).length;
+  const seen = DATA.sessionsSeen || 0, kept = Object.keys(all).length;
+  return '<div class="sptitle"><span data-tip="' + attr(T("sessTip")) + '">' + icon("clock") +
+    "<span>" + T("sessTitle") + "</span></span></div>" +
+    shown.map(([h, s, cost], i) => {
+      const tk = sessTokens(s);
+      const top = Object.entries(sessModels(s)).sort((x, y) => mTok(y[1]) - mTok(x[1]))[0];
+      return '<div class="mrow srow" data-s="' + attr(h) + '" style="animation-delay:' + i * 60 +
+        'ms"><div class="mtop"><span class="mname">' + sessWhen(s) +
+        '</span><span class="mmeta"><span data-exact="' + fmtUsdCents(cost) + '">' + fmtUsd(cost) +
+        "</span> · " + exb(tk) + " " + T("unitTokens") + " · " + s.req.toLocaleString() +
+        " " + T("unitReqs") + " · " + sessLen(s) + (top ? " · " + pretty(top[0]) : "") +
+        '</span></div><div class="bar"><i style="width:' + Math.max(2, (cost / max) * 100) +
+        '%"></i></div></div>';
+    }).join("") +
+    '<div class="sphint">' + T("sessFoot", shown.length, ranked.length) +
+    (spill ? " " + T("sessSpill", spill, T("copyLabel", range)) : "") +
+    (seen > kept ? " " + T("sessCap", kept, seen) : "") + "</div>";
+}
+
 function renderModels(a) {
   const pane = document.getElementById("modelsPane");
   const rows = Object.entries(a.models).sort((x, y) => mTok(y[1]) - mTok(x[1]));
@@ -3913,7 +4116,7 @@ function renderModels(a) {
         exb(mTok(v)) + " " + T("unitTokens") + " · " + v.msg.toLocaleString() + " " + T("unitMsgs") +
         '</span></div><div class="bar"><i style="width:' + Math.max(2, (mTok(v) / max) * 100) + '%"></i></div></div>'
       ).join("") + speedHTML(a)
-    : '<div class="empty">' + T("emptyRange") + "</div>");
+    : '<div class="empty">' + T("emptyRange") + "</div>") + sessionsHTML();
 }
 
 // --- day tooltip ---
@@ -4492,8 +4695,24 @@ function copyContext(el) {
   }
 
   // .tmrow is today-scoped, .mrow / .bank-card are range-scoped — same markup shape, different totals
+  // Checked ahead of the model probe: .srow is also a .mrow, and the probe below keys off data-m,
+  // which a session row does not have.
+  const sessEl = at(".srow");
+  if (sessEl) {
+    const s = DATA.sessions && DATA.sessions[sessEl.dataset.s];
+    if (s) {
+      const top = Object.entries(sessModels(s)).sort((x, y) => mTok(y[1]) - mTok(x[1]))[0];
+      const label = sessWhen(s);
+      return { label, text: T("copySession", label, sessLen(s), fmtUsdCents(sessCost(s)),
+        fmt(sessTokens(s)), s.req.toLocaleString(), s.days, top ? pretty(top[0]) : "—") };
+    }
+  }
+
   const todayModel = at(".tmrow");
-  const rangeModel = at(".mrow, .bank-card");
+  // [data-m] is required, not decorative: the serving-mode rows are .mrow too and carry no model,
+  // so a bare .mrow match handed them to the model branch, which then copied the name "undefined"
+  // and a row of zeros. They fall through to the range summary instead.
+  const rangeModel = at(".mrow[data-m], .bank-card");
   const modelEl = todayModel || rangeModel;
   if (modelEl) {
     const m = modelEl.dataset.m;

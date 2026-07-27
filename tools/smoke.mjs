@@ -153,6 +153,40 @@ if (embedded) {
   const spanning = [...new Set(Object.values(data.days)[0].sessions)]
     .filter((s) => Object.values(data.days).every((d) => d.sessions.includes(s)));
   check("a session spans every day in the fixture", spanning.length === 1, spanning.join(", ") || "none");
+
+  // The per-session bucket is keyed globally while every other bucket is keyed by day, so the two
+  // can drift apart without anything else noticing. These invariants are what say they have not:
+  // the sessions must account for exactly the same tokens and exactly the same billed requests as
+  // the day buckets do, no more and no less.
+  const sess = data.sessions || {};
+  const sTok = [0, 0, 0, 0, 0], dTok = [0, 0, 0, 0, 0];
+  let sReq = 0, spReq = 0;
+  for (const s of Object.values(sess)) {
+    sReq += s.req;
+    for (const arr of Object.values(s.models)) for (let i = 0; i < 5; i++) sTok[i] += arr[i];
+  }
+  for (const d of Object.values(data.days)) {
+    for (const v of Object.values(d.models)) {
+      dTok[0] += v.i; dTok[1] += v.o; dTok[2] += v.cw; dTok[3] += v.cr; dTok[4] += v.c1h || 0;
+    }
+    for (const b of Object.values(d.sp || {})) for (const arr of Object.values(b)) spReq += arr[5];
+  }
+  check("session tokens reproduce the day-model totals",
+    JSON.stringify(sTok) === JSON.stringify(dTok), sTok.join("/") + " vs " + dTok.join("/"));
+  // req is counted inside the usage dedup guard; models[].msg is counted outside it and runs far
+  // higher. Matching the serving buckets is what proves req is the deduped population.
+  check("session requests match the serving-bucket requests", sReq === spReq, sReq + " vs " + spReq);
+
+  // The spanning session must appear ONCE in the global bucket with days = 3, not once per day.
+  // That is the whole reason the bucket is not nested under days.
+  const multi = Object.values(sess).filter((s) => s.days > 1);
+  check("the spanning session is one row covering every day",
+    multi.length === 1 && multi[0].days === DAYS, multi.map((s) => s.days + "d").join(", ") || "none");
+  check("session count matches the fixture",
+    Object.keys(sess).length === DAYS + 1 && data.sessionsSeen === DAYS + 1,
+    Object.keys(sess).length + " kept, " + data.sessionsSeen + " seen");
+  // The hash is a DOM key, never a label — the raw id must not survive into the session bucket.
+  check("session keys are hashed here too", !Object.keys(sess).some((k) => k.startsWith("sess-")));
 }
 check("no leaked absolute paths", !html.includes(box) && !/[A-Za-z]:\\Users/.test(html));
 
