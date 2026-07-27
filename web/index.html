@@ -219,7 +219,9 @@
     <div class="card">
       <h3><svg class="icon" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg> Prefer the terminal?</h3>
       <p>The command-line version finds the transcripts on its own and writes a single HTML file:</p>
-      <pre>npx ccusage-interface</pre>
+      <!-- The github: form, not a bare package name: this is not on the npm registry, and a
+           command that 404s is worse than a longer one that works. -->
+      <pre>npx github:__REPOSLUG__</pre>
       <p>
         Add <code>--serve</code> for a live dashboard that rescans as you work. Same code, same
         page — this site just hands the file-finding job to you.

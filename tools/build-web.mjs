@@ -27,6 +27,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "public");
 const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 const repo = pkg.repository.url.replace(/^git\+/, "").replace(/\.git$/, "");
+// owner/name, for the `npx github:owner/name` install line. Derived rather than written out
+// again so the page cannot drift from the repository field above it.
+const slug = repo.replace(/^https?:\/\/github\.com\//, "");
 
 let failed = false;
 const check = (label, ok, detail) => {
@@ -91,10 +94,11 @@ const collectorSrc = createCollector.toString();
 const page = readFileSync(join(ROOT, "web", "index.html"), "utf8")
   .replace("__FONTS__", () => readFileSync(join(ROOT, "geist-fonts.css"), "utf8"))
   .replace("__COLLECTOR__", () => collectorSrc)
+  .replace(/__REPOSLUG__/g, () => slug)
   .replace(/__REPO__/g, () => repo)
   .replace(/__VERSION__/g, () => pkg.version);
 
-for (const left of ["__FONTS__", "__COLLECTOR__", "__REPO__", "__VERSION__"]) {
+for (const left of ["__FONTS__", "__COLLECTOR__", "__REPO__", "__REPOSLUG__", "__VERSION__"]) {
   if (page.includes(left)) die("placeholder " + left + " survived into the built page");
 }
 
@@ -192,6 +196,10 @@ check("no live-poll timer left in the shell", !shell.includes(POLL));
 check("GitHub link present in the footer", page.includes('class="ghbig" href="' + repo + '"'));
 check("feedback opens the repo's issue form, not a form post",
   page.includes(repo + "/issues/new") && !/<form/i.test(page));
+// This package is not on the npm registry, so `npx <name>` 404s. The site shipped that command
+// once; this keeps it from coming back the next time someone tidies the install line.
+check("install command does not point at the unpublished npm name",
+  page.includes("npx github:" + slug) && !new RegExp("npx\\s+" + pkg.name + "\\b").test(page));
 check("dashboard carries the feedback action", shell.includes('data-act="feedback"'));
 check("dashboard reads its payload from the session store",
   dashboard.includes(JSON.stringify(STORE_KEY)) && !dashboard.includes("__DATA__"));
