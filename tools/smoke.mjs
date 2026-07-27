@@ -37,6 +37,17 @@ const PER_MSG = {
 };
 const EXPECT_5M = PER_MSG.cache_creation_input_tokens - CACHE_1H;
 
+// How each request was served. The fourth entry omits both fields on purpose: transcripts
+// written before Claude Code recorded them are a real and common case, and any code that prices
+// by serving mode has to have an answer for traffic it cannot classify.
+const SERVING = [
+  { speed: "fast", service_tier: "standard" },
+  { service_tier: "batch" },
+  { service_tier: "priority" },
+  null,
+  {}, { }, { }, { },
+].map((s) => (s === null ? null : { speed: "standard", service_tier: "standard", ...s }));
+
 const lines = [];
 let n = 0;
 for (let d = 0; d < DAYS; d++) {
@@ -44,10 +55,18 @@ for (let d = 0; d < DAYS; d++) {
     // fixed clock: a smoke test that changes shape by the hour is not a smoke test
     const ts = new Date(Date.UTC(2026, 0, 5 + d, 9 + (i % 6), 30)).toISOString();
     const model = MODELS[i % MODELS.length];
-    lines.push(JSON.stringify({ type: "user", timestamp: ts, uuid: "u" + n, sessionId: "sess-" + d }));
+    // One session deliberately spans all three days. Sessions are keyed independently of the
+    // day buckets they touch, and a fixture where every session lives inside one day would let
+    // a per-session rollup that silently drops the boundary case pass.
+    const sess = i === 0 ? "sess-spanning" : "sess-" + d;
+    const serving = SERVING[i % SERVING.length];
+    // cwd is present in real transcripts and is exactly the field the privacy promise is about.
+    // It is the sandbox path here, which turns the leaked-path assertion below into a real
+    // negative control: if project reading ever becomes the default, this fixture fails loudly.
+    lines.push(JSON.stringify({ type: "user", timestamp: ts, uuid: "u" + n, sessionId: sess, cwd: roots }));
     lines.push(JSON.stringify({
-      type: "assistant", timestamp: ts, uuid: "a" + n, sessionId: "sess-" + d, requestId: "req" + n,
-      message: { id: "msg" + n, model, usage: { ...PER_MSG } },
+      type: "assistant", timestamp: ts, uuid: "a" + n, sessionId: sess, requestId: "req" + n, cwd: roots,
+      message: { id: "msg" + n, model, usage: { ...PER_MSG, ...(serving || {}) } },
     }));
     n++;
   }
@@ -107,6 +126,33 @@ if (embedded) {
   check("1-hour cache writes captured separately", tally("c1h") === MSGS * CACHE_1H, tally("c1h") + " vs " + MSGS * CACHE_1H);
   check("creation tiers sum to the reported total",
     tally("cw") + tally("c1h") === MSGS * PER_MSG.cache_creation_input_tokens);
+
+  // Every counted usage record lands in exactly one serving bucket, so the serving buckets must
+  // reproduce the model totals exactly. This is the invariant that anything pricing by serving
+  // mode depends on: if the two ever disagree, a figure on the page is double-counting or
+  // dropping traffic, and a bucket total that merely looks plausible would hide it.
+  const spArrays = Object.values(data.days).flatMap((d) => Object.values(d.sp || {}).flatMap((b) => Object.values(b)));
+  const spTally = (idx) => spArrays.reduce((t, a) => t + (a[idx] || 0), 0);
+  const FIELDS = ["i", "o", "cw", "cr", "c1h"];
+  const mismatched = FIELDS.filter((f, idx) => spTally(idx) !== tally(f));
+  check("serving buckets reproduce the model totals", mismatched.length === 0,
+    mismatched.length ? mismatched.map((f) => f + ": " + spTally(FIELDS.indexOf(f)) + " vs " + tally(f)).join(", ")
+                      : FIELDS.map((f, idx) => f + " " + spTally(idx)).join(", "));
+  check("serving buckets account for every message", spTally(5) === MSGS, spTally(5) + " vs " + MSGS);
+
+  // The fixture serves one message per day as Fast Mode, one via Batch, one via Priority, and
+  // one with the fields absent entirely. All four have to survive into the payload, or the
+  // how-it-was-served card is being tested against traffic that is uniformly standard.
+  const spKeys = new Set(Object.values(data.days).flatMap((d) => Object.keys(d.sp || {})));
+  check("every serving mode in the fixture survived",
+    ["fast|standard", "standard|batch", "standard|priority", "unknown|unknown", "standard|standard"]
+      .every((k) => spKeys.has(k)), [...spKeys].join(", "));
+
+  // A session that spans day boundaries is the case a per-day rollup gets wrong, so assert the
+  // fixture really produced one: the same hash has to appear under all three days.
+  const spanning = [...new Set(Object.values(data.days)[0].sessions)]
+    .filter((s) => Object.values(data.days).every((d) => d.sessions.includes(s)));
+  check("a session spans every day in the fixture", spanning.length === 1, spanning.join(", ") || "none");
 }
 check("no leaked absolute paths", !html.includes(box) && !/[A-Za-z]:\\Users/.test(html));
 

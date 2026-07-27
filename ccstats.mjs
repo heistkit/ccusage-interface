@@ -676,6 +676,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     .dval, .dpct, .dcenter b,
     .mrow .mmeta,
     #liveCost, #liveCount, #liveMeta,
+    .cewrap .ceval, .cewrap .cepct, .cewrap .ceamt, .cewrap .cechips b, .cewrap .cechips span,
     .foot, .irl-panel
   ) {
     filter: blur(6px); user-select: none; -webkit-user-select: none;
@@ -1394,6 +1395,61 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   #tip { max-width: 300px; }
   #tip .tdesc { color: var(--muted); font-size: 14.5px; line-height: 1.45; }
   #tip .tdate + .tdesc { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; }
+
+  /* --- cache efficiency: the no-cache counterfactual, drawn as a discount ---
+     Two bars on one shared scale rather than a single "percent saved" bar: the saving can come
+     out negative and a single bar has no honest way to draw that. --pmin keeps a nonzero-but-tiny
+     bar visible without flooring the proportion, the same rule the wallet blocks use. An empty
+     host collapses so a range with nothing to say leaves no chrome behind. */
+  .cewrap {
+    background: var(--card); border-radius: 10px; padding: 15px 18px; margin: 12px 0;
+    position: relative; overflow: hidden;
+    animation: rise .5s cubic-bezier(.22,1,.36,1) backwards .05s;
+    transition: transform .18s cubic-bezier(.34,1.56,.64,1), box-shadow .18s ease, border-radius .18s ease;
+  }
+  .cewrap:empty { display: none; }
+  .cewrap:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,.12); border-radius: 4px; }
+  .cewrap .cetitle {
+    font-size: 14px; color: var(--muted); user-select: none;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  }
+  .cewrap .cetitle [data-tip] {
+    cursor: help; text-decoration: underline dotted 1px;
+    text-decoration-color: var(--border); text-underline-offset: 3px;
+    transition: color .15s ease, text-decoration-color .15s ease;
+  }
+  .cewrap .cetitle [data-tip]:hover { color: var(--text); text-decoration-color: var(--accent); }
+  .cewrap .cehead { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; }
+  .cewrap .ceval { font-size: 32px; font-weight: 700; color: var(--accent); white-space: nowrap; letter-spacing: -.022em; }
+  /* A loss is not an error state, and this palette has no red. Dropping to --muted says "this is
+     not the win the accent colour promises" without inventing a colour for it. */
+  .cewrap .ceval.bad { color: var(--muted); }
+  .cewrap .cepct { font-size: 14px; color: var(--muted); }
+  .cewrap .cebars {
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+    gap: 6px 10px; margin-top: 12px; font-size: 13.5px; color: var(--muted);
+  }
+  .cewrap .celab { white-space: nowrap; }
+  .cewrap .ceamt { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; text-align: right; }
+  .cewrap .cebar { display: block; height: 8px; border-radius: 4px; background: var(--cell); overflow: hidden; }
+  .cewrap .cebar i {
+    display: block; height: 100%; width: var(--p, 0%); min-width: var(--pmin, 0px);
+    border-radius: 4px; background: var(--b3);
+    transform-origin: left; animation: growx .7s cubic-bezier(.22,1,.36,1) backwards .1s;
+  }
+  .cewrap .ceghost i { background: var(--b2); }
+  .cewrap .cechips {
+    display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 12px;
+    font-size: 13.5px; color: var(--muted);
+  }
+  .cewrap .cechips em {
+    font-style: normal; display: inline-flex; align-items: baseline; gap: 5px;
+    background: var(--chip); border-radius: 8px; padding: 3px 9px;
+    transition: background-color .16s ease;
+  }
+  .cewrap .cechips em:hover { background: var(--cell); }
+  .cewrap .cechips em b { color: var(--text); font-weight: 650; }
+  .cewrap .cenote { font-size: 13.5px; color: var(--muted); line-height: 1.55; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -1523,6 +1579,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
       </div>
     </div>
     <div id="pricewarn"></div>
+    <div class="cewrap" id="cache"></div>
     <div class="cards" id="cards"></div>
     <div class="heatwrap"><div class="heat" id="heat"></div></div>
     <div class="chartwrap">
@@ -1706,6 +1763,29 @@ const LANGS = {
           "Kirkland rotisserie chickens", "2-liter Cokes", "Crunchwrap Supremes",
           "Robux", "PS5 Pros", "Galaxy S26 Ultras", "Bitcoin"],
     sry: "sry anthropic",
+    ceTitle: "What the cache saved",
+    ceTip: "Cache reads and cache writes are both tokens you actually sent — a cache changes the rate, not the traffic. This prices the same tokens with no cache at all: every cached token at the full input rate, and nothing else moved. Same requests, same models, same output. It does not model what you would have done differently. An estimate, not a bill.",
+    ceOff: (p) => p + " off the no-cache price",
+    ceMore: (p) => p + " over the no-cache price",
+    cePaid: "You paid",
+    ceWould: "Without a cache",
+    ceReads: "Cache reads",
+    ceOfPrompt: (p) => p + " of prompt tokens",
+    ceReadCost: "They cost",
+    ceOfBill: (p) => p + " of the bill",
+    ceWritePremium: "Write premium",
+    ceOnTop: (t) => "on top of " + t + " cache writes",
+    ceNone: "Nothing in this range was cached, so there is no saving to show. Cache reads bill at 0.1× input and cache writes at 1.25×, so the discount comes from reuse.",
+    ceGuess: "Part of this range is priced by a fallback rate, so the saving inherits that guess.",
+    copyCache: (scope, saved, pct, would, paid, reads, share, writes) =>
+      "ccstats cache (" + scope + "): saved " + saved + " · " + pct + " off the no-cache price · " +
+      paid + " paid vs " + would + " without a cache · cache reads " + reads + " tokens (" + share +
+      " of prompt tokens) · cache writes " + writes + " tokens",
+    copyCacheLoss: (scope, extra, pct, would, paid, reads, share, writes) =>
+      "ccstats cache (" + scope + "): cost " + extra + " more than no cache · " + pct +
+      " over the no-cache price · " + paid + " paid vs " + would + " without a cache · cache reads " +
+      reads + " tokens (" + share + " of prompt tokens) · cache writes " + writes + " tokens",
+    copyCacheNone: (scope) => "ccstats cache (" + scope + "): nothing cached.",
     partyTitle: "ccstats — party mode",
   },
   ko: {
@@ -1868,6 +1948,29 @@ const LANGS = {
     irl: ["레이즈 감자칩", "빅맥", "코스트코 핫도그 세트", "커클랜드 통닭", "코카콜라 2L",
           "크런치랩 슈프림", "로벅스", "PS5 프로", "갤럭시 S26 울트라", "비트코인"],
     sry: "앤트로픽 미안",
+    ceTitle: "캐시가 아낀 금액",
+    ceTip: "캐시 읽기도 캐시 쓰기도 실제로 보낸 토큰입니다. 캐시가 바꾸는 것은 트래픽이 아니라 단가입니다. 같은 토큰을 캐시가 전혀 없다고 가정해 계산한 값과 비교합니다. 캐시 토큰 전부를 입력 정가로 매기고 나머지는 그대로 둡니다. 요청 수도 모델도 출력도 동일하며, 캐시가 없었다면 다르게 행동했을 가능성은 반영하지 않습니다. 청구서가 아니라 추정치입니다.",
+    ceOff: (p) => "캐시 없을 때보다 " + p + " 저렴",
+    ceMore: (p) => "캐시 없을 때보다 " + p + " 비쌈",
+    cePaid: "실제 지불",
+    ceWould: "캐시가 없었다면",
+    ceReads: "캐시 읽기",
+    ceOfPrompt: (p) => "프롬프트 토큰의 " + p,
+    ceReadCost: "그 비용",
+    ceOfBill: (p) => "전체 요금의 " + p,
+    ceWritePremium: "쓰기 할증",
+    ceOnTop: (t) => "캐시 쓰기 " + t + " 에 붙은 금액",
+    ceNone: "이 구간에는 캐시된 트래픽이 없어 보여줄 절감액이 없습니다. 캐시 읽기는 입력의 0.1×, 캐시 쓰기는 1.25×로 청구되므로 할인은 재사용에서 나옵니다.",
+    ceGuess: "이 구간의 일부는 대체 요금으로 계산되어 절감액도 그 추측을 그대로 물려받습니다.",
+    copyCache: (scope, saved, pct, would, paid, reads, share, writes) =>
+      "ccstats 캐시 (" + scope + "): " + saved + " 절감 · 캐시 없을 때보다 " + pct + " 저렴 · 실제 " +
+      paid + " / 캐시 없었다면 " + would + " · 캐시 읽기 " + reads + " 토큰 (프롬프트 토큰의 " + share +
+      ") · 캐시 쓰기 " + writes + " 토큰",
+    copyCacheLoss: (scope, extra, pct, would, paid, reads, share, writes) =>
+      "ccstats 캐시 (" + scope + "): 캐시 없을 때보다 " + extra + " 더 듦 · " + pct + " 비쌈 · 실제 " +
+      paid + " / 캐시 없었다면 " + would + " · 캐시 읽기 " + reads + " 토큰 (프롬프트 토큰의 " + share +
+      ") · 캐시 쓰기 " + writes + " 토큰",
+    copyCacheNone: (scope) => "ccstats 캐시 (" + scope + "): 캐시된 트래픽 없음.",
     partyTitle: "ccstats — 파티 모드",
   },
   // --- beta translations ---------------------------------------------------------------
@@ -2022,6 +2125,29 @@ const LANGS = {
     irlAmount: (n) =>
       n >= 10 ? Math.round(n).toLocaleString() : n >= 1 ? n.toFixed(1) : (n * 100).toFixed(1) + "% の",
     sry: "アンソロピックさんごめん",
+    ceTitle: "キャッシュで浮いた額",
+    ceTip: "キャッシュの読み取りも書き込みも、実際に送ったトークンです。キャッシュが変えるのは通信量ではなく単価です。ここでは同じトークンをキャッシュがまったくない前提で計算しています。キャッシュ分はすべて入力の通常単価で計上し、それ以外は動かしません。リクエスト数もモデルも出力も同じで、キャッシュがなければ別の使い方をしたであろう分は考慮していません。請求書ではなく推定です。",
+    ceOff: (p) => "キャッシュなしより " + p + " 安い",
+    ceMore: (p) => "キャッシュなしより " + p + " 高い",
+    cePaid: "実際の支払い",
+    ceWould: "キャッシュなしなら",
+    ceReads: "キャッシュ読み取り",
+    ceOfPrompt: (p) => "プロンプトトークンの " + p,
+    ceReadCost: "その費用",
+    ceOfBill: (p) => "請求全体の " + p,
+    ceWritePremium: "書き込み割増",
+    ceOnTop: (t) => "キャッシュ書き込み " + t + " に対して",
+    ceNone: "この期間にキャッシュされた通信はないため、示せる節約はありません。キャッシュ読み取りは入力の0.1×、書き込みは1.25×で課金されるので、割引は再利用から生まれます。",
+    ceGuess: "この期間の一部はフォールバック単価で計算されているため、節約額もその推測を引き継ぎます。",
+    copyCache: (scope, saved, pct, would, paid, reads, share, writes) =>
+      "ccstats キャッシュ (" + scope + "): " + saved + " 節約 · キャッシュなしより " + pct + " 安い · 実際 " +
+      paid + " / キャッシュなしなら " + would + " · キャッシュ読み取り " + reads + " トークン (プロンプトトークンの " +
+      share + ") · キャッシュ書き込み " + writes + " トークン",
+    copyCacheLoss: (scope, extra, pct, would, paid, reads, share, writes) =>
+      "ccstats キャッシュ (" + scope + "): キャッシュなしより " + extra + " 高くついた · " + pct + " 超過 · 実際 " +
+      paid + " / キャッシュなしなら " + would + " · キャッシュ読み取り " + reads + " トークン (プロンプトトークンの " +
+      share + ") · キャッシュ書き込み " + writes + " トークン",
+    copyCacheNone: (scope) => "ccstats キャッシュ (" + scope + "): キャッシュされた通信なし。",
     partyTitle: "ccstats — パーティーモード",
   },
   zh: {
@@ -2171,6 +2297,29 @@ const LANGS = {
     irlAmount: (n) =>
       n >= 10 ? Math.round(n).toLocaleString() : n >= 1 ? n.toFixed(1) : (n * 100).toFixed(1) + "% 的",
     sry: "对不起 Anthropic",
+    ceTitle: "缓存省下的钱",
+    ceTip: "缓存读取和缓存写入都是你真正发出去的 token，缓存改变的是单价而不是流量。这里把同样的 token 按完全不用缓存来计价：所有缓存 token 都按输入原价计算，其余不变。请求数、模型、输出都一样，也没有假设你在没有缓存时会换一种用法。这是估算，不是账单。",
+    ceOff: (p) => "比不用缓存便宜 " + p,
+    ceMore: (p) => "比不用缓存贵 " + p,
+    cePaid: "实际支付",
+    ceWould: "不用缓存的话",
+    ceReads: "缓存读取",
+    ceOfPrompt: (p) => "占提示 token 的 " + p,
+    ceReadCost: "花费",
+    ceOfBill: (p) => "占账单的 " + p,
+    ceWritePremium: "写入溢价",
+    ceOnTop: (t) => "对应 " + t + " 缓存写入",
+    ceNone: "这个区间没有任何缓存流量，因此没有可展示的节省。缓存读取按输入的 0.1× 计费，缓存写入按 1.25×，折扣来自复用。",
+    ceGuess: "这个区间有一部分按兜底价格计算，节省额也继承了那个猜测。",
+    copyCache: (scope, saved, pct, would, paid, reads, share, writes) =>
+      "ccstats 缓存 (" + scope + "): 省下 " + saved + " · 比不用缓存便宜 " + pct + " · 实际 " + paid +
+      " / 不用缓存 " + would + " · 缓存读取 " + reads + " tokens (占提示 token 的 " + share +
+      ") · 缓存写入 " + writes + " tokens",
+    copyCacheLoss: (scope, extra, pct, would, paid, reads, share, writes) =>
+      "ccstats 缓存 (" + scope + "): 比不用缓存多花 " + extra + " · 高出 " + pct + " · 实际 " + paid +
+      " / 不用缓存 " + would + " · 缓存读取 " + reads + " tokens (占提示 token 的 " + share +
+      ") · 缓存写入 " + writes + " tokens",
+    copyCacheNone: (scope) => "ccstats 缓存 (" + scope + "): 没有缓存流量。",
     partyTitle: "ccstats — 派对模式",
   },
   es: {
@@ -2320,6 +2469,29 @@ const LANGS = {
     irlAmount: (n) =>
       n >= 10 ? Math.round(n).toLocaleString() : n >= 1 ? n.toFixed(1) : (n * 100).toFixed(1) + "% de un",
     sry: "perdón anthropic",
+    ceTitle: "Lo que ahorró la caché",
+    ceTip: "Las lecturas y las escrituras de caché son tokens que enviaste de verdad: la caché cambia la tarifa, no el tráfico. Esto pone precio a esos mismos tokens sin caché alguna: cada token cacheado a la tarifa de entrada completa y nada más se mueve. Mismas peticiones, mismos modelos, misma salida, y no supone que habrías trabajado de otra forma. Es una estimación, no una factura.",
+    ceOff: (p) => p + " menos que sin caché",
+    ceMore: (p) => p + " más que sin caché",
+    cePaid: "Pagaste",
+    ceWould: "Sin caché",
+    ceReads: "Lecturas de caché",
+    ceOfPrompt: (p) => p + " de los tokens de entrada",
+    ceReadCost: "Cuestan",
+    ceOfBill: (p) => p + " de la factura",
+    ceWritePremium: "Prima de escritura",
+    ceOnTop: (t) => "sobre " + t + " de escrituras",
+    ceNone: "Nada en este rango pasó por la caché, así que no hay ahorro que mostrar. Las lecturas de caché cuestan 0,1× la entrada y las escrituras 1,25×, así que el descuento viene de la reutilización.",
+    ceGuess: "Parte de este rango se cotiza con una tarifa de reserva, así que el ahorro hereda esa suposición.",
+    copyCache: (scope, saved, pct, would, paid, reads, share, writes) =>
+      "ccstats caché (" + scope + "): ahorro de " + saved + " · " + pct + " menos que sin caché · " +
+      paid + " pagado frente a " + would + " sin caché · lecturas de caché " + reads + " tokens (" +
+      share + " de los tokens de entrada) · escrituras de caché " + writes + " tokens",
+    copyCacheLoss: (scope, extra, pct, would, paid, reads, share, writes) =>
+      "ccstats caché (" + scope + "): costó " + extra + " más que sin caché · " + pct + " por encima · " +
+      paid + " pagado frente a " + would + " sin caché · lecturas de caché " + reads + " tokens (" +
+      share + " de los tokens de entrada) · escrituras de caché " + writes + " tokens",
+    copyCacheNone: (scope) => "ccstats caché (" + scope + "): nada en caché.",
     partyTitle: "ccstats — modo fiesta",
   },
 };
@@ -2515,6 +2687,10 @@ function aggregate(keys) {
   // separately (1.25x vs 2x input), which is why costParts is accumulated, not derived
   const totals = { i: 0, o: 0, cw: 0, cr: 0 };
   const costParts = { i: 0, o: 0, cw: 0, cr: 0 };
+  // The no-cache counterfactual: the same cache-write and cache-read tokens repriced at the plain
+  // input rate, because every one of them was part of a prompt that really was sent. Accumulated
+  // per model for the same reason costParts is — input rates span 12x across models.
+  const noCache = { w: 0, r: 0 };
   for (const k of keys) {
     const d = DATA.days[k];
     d.sessions.forEach((s) => sessions.add(s));
@@ -2530,6 +2706,8 @@ function aggregate(keys) {
       costParts.o += v.o * out / 1e6;
       costParts.cw += (v.cw * 1.25 + h1 * 2) * inp / 1e6;
       costParts.cr += v.cr * inp * 0.1 / 1e6;
+      noCache.w += (v.cw + h1) * inp / 1e6;
+      noCache.r += v.cr * inp / 1e6;
       tokens += mTok(v); cost += mCost(m, v);
     }
     // Kept per model inside each bucket, not blended: the multipliers below scale a *rate*, and
@@ -2542,7 +2720,7 @@ function aggregate(keys) {
       }
     }
   }
-  return { sessions: sessions.size, hours, models, sp, msgs, tokens, cost, totals, costParts, activeDays: keys.filter((k) => DATA.days[k].msgs > 0).length };
+  return { sessions: sessions.size, hours, models, sp, msgs, tokens, cost, totals, costParts, noCache, activeDays: keys.filter((k) => DATA.days[k].msgs > 0).length };
 }
 
 // --- how requests were served: Fast Mode, the Batch API, Priority Tier ---------------------
@@ -2673,11 +2851,81 @@ function render() {
     ).join("");
   document.querySelectorAll("#cards .value").forEach((el) => countUp(el, el.dataset.final));
 
+  renderCache(a);
   renderHeat(keys);
   renderChart(keys);
   renderToday();
   rollBook();
   renderModels(a);
+}
+
+// --- cache efficiency ---------------------------------------------------------------------
+//
+// The counterfactual is deliberately narrow: same tokens, same requests, same models, only the
+// rate moves. A cache-write token and a cache-read token were both part of a prompt that really
+// was sent — a cache is a discount on traffic, not a way of avoiding it — so with no cache at all
+// each of them bills as plain input at 1x. Output is not cacheable and the uncached input segment
+// already bills at 1x in both worlds, so neither of those moves.
+//
+// It can come out negative. Filling a cache costs 1.25x (5-minute) or 2x (1-hour) and only repays
+// on reuse, so a range of one-shot prompts genuinely lost money on the cache. The card says so
+// rather than clamping at zero and calling every user a winner.
+//
+// pctStr is not reused here: its p < 0.01 branch fires for every negative number, so a loss would
+// render as "<0.01%". The sign belongs in the wording, never in the digits.
+const cePct = (part, total) => {
+  if (!total) return "0%";
+  const p = Math.abs(part / total) * 100;
+  return (p > 0 && p < 0.1 ? "<0.1" : p < 10 ? p.toFixed(1) : String(Math.round(p))) + "%";
+};
+
+function renderCache(a) {
+  const host = document.getElementById("cache");
+  if (!host) return;
+  const cacheTok = a.totals.cw + a.totals.cr;
+  const prompt = a.totals.i + cacheTok;
+  // An empty range already says so once, on the Models tab. A second card reading "$0.00 saved,
+  // 0%" is noise, so the host stays empty and :empty collapses the chrome.
+  if (!prompt && !a.totals.o) { host.innerHTML = ""; return; }
+
+  const scope = range === "all" ? T("ofAll") : T("ofDays", range);
+  const head = '<div class="cetitle"><span data-tip="' + attr(T("ceTip")) + '">' +
+    icon("sprout") + " " + T("ceTitle") + "</span><span>" + scope + "</span></div>";
+
+  // Not a scored zero: with nothing cached there is nothing to be efficient about, and a
+  // "0% saved" headline reads as a bad grade for a range that simply never used a cache.
+  if (!cacheTok) { host.innerHTML = head + '<div class="cenote">' + T("ceNone") + "</div>"; return; }
+
+  const would = a.costParts.i + a.costParts.o + a.noCache.w + a.noCache.r;
+  const saved = would - a.cost;
+  const premium = a.costParts.cw - a.noCache.w;
+  const bad = saved < 0;
+  // one scale for both bars, so the pair reads as a comparison rather than two percentages
+  const scale = Math.max(a.cost, would);
+  const bw = (v, cls) => '<i class="cebar' + cls + '"><i style="--p:' +
+    (scale ? (v / scale) * 100 : 0) + "%;--pmin:" + (v > 0 ? "2px" : "0px") + '"></i></i>';
+
+  host.innerHTML = head +
+    '<div class="cehead"><span class="ceval' + (bad ? " bad" : "") + '">' +
+      fmtUsdCents(Math.abs(saved)) + '</span><span class="cepct">' +
+      T(bad ? "ceMore" : "ceOff", cePct(saved, would)) + "</span></div>" +
+    '<div class="cebars">' +
+      '<span class="celab">' + T("cePaid") + "</span>" + bw(a.cost, "") +
+      '<span class="ceamt">' + fmtUsdCents(a.cost) + "</span>" +
+      '<span class="celab">' + T("ceWould") + "</span>" + bw(would, " ceghost") +
+      '<span class="ceamt">' + fmtUsdCents(would) + "</span>" +
+    "</div>" +
+    '<div class="cechips">' +
+      "<em>" + T("ceReads") + " " + exb(a.totals.cr) + " <span>" +
+        T("ceOfPrompt", cePct(a.totals.cr, prompt)) + "</span></em>" +
+      "<em>" + T("ceReadCost") + " <b>" + fmtUsdCents(a.costParts.cr) + "</b> <span>" +
+        T("ceOfBill", cePct(a.costParts.cr, a.cost)) + "</span></em>" +
+      "<em>" + T("ceWritePremium") + " <b>" + fmtUsdCents(premium) + "</b> <span>" +
+        T("ceOnTop", exb(a.totals.cw)) + "</span></em>" +
+    "</div>" +
+    // rates() already filled unpriced during the aggregate this card was handed, so the hedge is
+    // complete for the range even though renderPriceWarning painted before this ran.
+    (unpriced.size ? '<div class="cenote">' + T("ceGuess") + "</div>" : "");
 }
 
 function renderChart() {
@@ -3782,6 +4030,22 @@ function copyContext(el) {
       // v.cw here left the four components short of the total they sit next to — on real data
       // that was 16.5M tokens of 1h cache writes silently dropped out of the copied text.
       fmt(mTok(v)), fmt(v.i), fmt(v.o), fmt(v.cw + v.c1h), fmt(v.cr), v.msg.toLocaleString()) };
+  }
+
+  // The card is range-scoped and holds no per-element data, so this recomputes the same aggregate
+  // the renderer used instead of scraping animated text back out of the DOM. Nothing nests inside
+  // #cache and #cache nests inside nothing that is probed, so its position in this chain is not
+  // load-bearing — unlike [data-k] and .thbar above it.
+  if (at("#cache")) {
+    const ca = aggregate(keysInRange());
+    const label = T("ceTitle"), scope = T("copyLabel", range);
+    const cacheTok = ca.totals.cw + ca.totals.cr;
+    if (!cacheTok) return { label, text: T("copyCacheNone", scope) };
+    const would = ca.costParts.i + ca.costParts.o + ca.noCache.w + ca.noCache.r;
+    const saved = would - ca.cost;
+    return { label, text: T(saved < 0 ? "copyCacheLoss" : "copyCache", scope,
+      fmtUsdCents(Math.abs(saved)), cePct(saved, would), fmtUsdCents(would), fmtUsdCents(ca.cost),
+      fmt(ca.totals.cr), cePct(ca.totals.cr, ca.totals.i + cacheTok), fmt(ca.totals.cw)) };
   }
 
   const cardEl = at("[data-card]");
