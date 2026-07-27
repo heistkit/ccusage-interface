@@ -47,6 +47,7 @@ const CONFIG_DEFAULTS = {
   theme: null,        // "light" | "dark" — initial theme, user can still switch
   currency: null,     // { symbol, rate } — rate multiplies the USD estimate
   hashSessions: true, // false keeps raw session UUIDs in the output; not recommended
+  projects: false,    // true buckets usage by project FOLDER NAME — see --help before enabling
 };
 function loadConfig(explicit) {
   const path = explicit || join(DIR, "ccstats.config.json");
@@ -88,6 +89,19 @@ function* jsonlFiles(dir) {
 // stays outside it, in buildData.
 export function createCollector(opts = {}) {
   const hashSessions = opts.hashSessions !== false;
+  // Strict === true, unlike hashSessions above. That one has a safe default and a dangerous
+  // override; this one is the reverse, so it fails closed: a caller that forgets the key, or
+  // passes something it does not fully control, gets the private answer rather than the
+  // interesting one.
+  const collectProjects = opts.projects === true;
+  // The last segment of a cwd and nothing else — the project folder's own name. The parent chain
+  // is where usernames, employers, clients and directory layout live, and it is the part that is
+  // never worth shipping at any setting. Capped because a directory name has no length limit and
+  // this string goes straight into the payload.
+  const baseName = (p) => {
+    const parts = String(p).split(/[\\/]+/).filter(Boolean);
+    return parts.length ? parts[parts.length - 1].slice(0, 64) : "";
+  };
 
   // FNV-1a. Session ids are needed to count distinct sessions across day boundaries, but the raw
   // UUIDs identify real conversations and end up in the exported JSON, so they are reduced to an
@@ -117,6 +131,28 @@ let files = 0, lines = 0, badLines = 0;
 // its own session and could not express a start, a duration or a span at all. day.sessions stays
 // exactly as it is — "how many distinct sessions touched this day" is a different question, and
 // still the right one for the day-keyed views.
+// Project buckets are identified by an ordinal, not by a hash of the path. A hash would be derived
+// from the very string this feature exists to keep out of the file: with the folder name printed in
+// plain text beside it, anyone who could guess the directories above it could confirm them against
+// the hash. An ordinal carries no path material at all, still tells two projects with the same
+// folder name apart — "~/work/api" and "~/oss/api" are different money — and stays deterministic,
+// so the browser build and the CLI keep producing byte-identical payloads.
+const projIds = new Map(); // full cwd -> "p0", "p1", ... The keys never leave this closure.
+const projNames = {};      // "p0" -> folder name; this is the only project string that ships
+const projId = (cwd) => {
+  let id = projIds.get(cwd);
+  if (id === undefined) {
+    const base = baseName(cwd);
+    // No usable last segment (a bare "/" as cwd) is indistinguishable from no cwd at all, and
+    // folding it in keeps every emitted id paired with a real name.
+    if (!base) return "unknown";
+    id = "p" + projIds.size;
+    projIds.set(cwd, id);
+    projNames[id] = base;
+  }
+  return id;
+};
+
 const sess = {};
 const getSess = (h) => (sess[h] ??= { models: {}, req: 0, t0: 0, t1: 0, days: new Set() });
 // Days roll off the window; sessions never do, which makes this the one part of the payload with
@@ -231,6 +267,18 @@ addFile(id, text) {
             se[5]++;
             ss.req++;
           }
+
+          // Same guard, same vals array, which is what makes sum(proj) === sum(sp) === the
+          // per-model token totals an invariant the smoke test can assert. Outside the guard this
+          // bucket would run 2.45x high: on real transcripts 60% of assistant records are repeat
+          // writes of one billed request.
+          if (collectProjects) {
+            const pk = o.cwd ? projId(o.cwd) : "unknown";
+            const pb = ((day.proj ??= {})[pk] ??= {});
+            const pm = (pb[model] ??= [0, 0, 0, 0, 0, 0]);
+            for (let n = 0; n < 5; n++) pm[n] += vals[n];
+            pm[5]++;
+          }
         }
       }
     }
@@ -241,7 +289,7 @@ addFile(id, text) {
 // config was in force. The browser has neither a filesystem nor a config file, so it passes its
 // own — which is why these are arguments rather than reads of the module-level CONFIG.
 result(meta = {}) {
-return {
+const out = {
   generatedAt: new Date().toISOString(),
   files, lines, badLines,
   roots: meta.roots || 0,       // count only — the paths themselves are not shipped
@@ -272,9 +320,19 @@ return {
   days: Object.fromEntries(
     Object.entries(days)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => [k, { models: v.models, msgs: v.msgs, sessions: [...v.sessions], hours: v.hours, hm: v.hm, sp: v.sp }])
+      .map(([k, v]) => {
+        const rec = { models: v.models, msgs: v.msgs, sessions: [...v.sessions], hours: v.hours, hm: v.hm, sp: v.sp };
+        // Absent, not empty. Someone reading an exported payload — or a dashboard sent to them —
+        // has to be able to tell "this build did not collect projects" from "it did and found
+        // none", and an empty object cannot say the first of those.
+        if (collectProjects) rec.proj = v.proj || {};
+        return [k, rec];
+      })
   ),
 };
+// Same rule at the top level: the name map exists only on a build that was asked for it.
+if (collectProjects) out.projects = { ...projNames };
+return out;
 },
 
 };
@@ -283,7 +341,12 @@ return {
 // The Node side of the scan: find the transcripts, hand their text to the collector above.
 export function buildData(opts = {}) {
   const roots = opts.roots || CONFIG.roots || defaultRoots();
-  const collector = createCollector({ hashSessions: CONFIG.hashSessions !== false });
+  // Two ways in, both explicit: --projects on the command line, or "projects": true in the config
+  // file. Neither has a default that turns it on, and there is no env-var route.
+  const collector = createCollector({
+    hashSessions: CONFIG.hashSessions !== false,
+    projects: opts.projects === true || CONFIG.projects === true,
+  });
   for (const root of roots) {
     for (const file of jsonlFiles(root)) {
       let text;
@@ -730,7 +793,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     .today .tcmpa, .today .tcmpb, .today .tcmpd,
     .wcard .wbalance, .wcard .mcost2, .wcard .block b, .wcard .block .pct,
     .dval, .dpct, .dcenter b,
-    .mrow .mmeta, .sphint, .pmnote b,
+    .mrow .mmeta, .pjrow .mname, .sphint, .pmnote b,
     #liveCost, #liveCount, #liveMeta,
     .cewrap .ceval, .cewrap .cepct, .cewrap .ceamt, .cewrap .cechips b, .cewrap .cechips span,
     .burn .burnrow b, .burn .burnproj b, .burn .burnband,
@@ -1536,6 +1599,21 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
      date deliberately does not, for the same reason the heatmap stays legible. */
   .srow .mtop { flex-wrap: wrap; gap: 4px 12px; }
   .srow .mname { font-variant-numeric: tabular-nums; }
+
+  /* --- project breakdown: the card, and the badge that discloses it -------------------------
+     The badge is a neutral chip and not a warning on purpose. Whoever built this page chose to
+     put project names in it; a page that scolds its owner on every load teaches people to turn
+     the privacy control off to stop the scolding. It states a fact, in the top bar, on both
+     tabs, where the person about to share the file will actually see it. */
+  .pjbadge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px;
+             background: var(--chip); color: var(--muted); border-radius: 8px;
+             font-size: 14px; font-weight: 600; cursor: help; white-space: nowrap; }
+  .pjbadge .icon { width: 15px; height: 15px; vertical-align: 0; }
+  .pjbadge[hidden] { display: none; }
+  /* Folder names have no length limit and the row has a cost on its right-hand end. */
+  .pjrow .mname { display: inline-block; max-width: 62%; overflow: hidden;
+                  text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+  .pjid { color: var(--muted); font-weight: 500; }
   .rspan { font-size: 14px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 
   /* --- month-to-date burn: an annotation on the cost above it, not a card of its own ---------
@@ -1629,6 +1707,13 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
       </button>
     </div>
     <div style="display:flex;gap:6px;align-items:center">
+      <!-- Shown only when the payload actually carries project names — see paintProjectBadge().
+           Someone handed a dashboard should not have to open a tab to find out whether their
+           colleague's folder names are in it. -->
+      <span class="pjbadge" id="pjbadge" hidden data-tip-key="pjBadgeTip">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span data-i18n="pjBadge"></span>
+      </span>
       <!-- From Uiverse.io by JaydipPrajapati1910 -->
       <button id="refreshBtn" class="rbtn" type="button" data-tip-key="tipRefresh">
         <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 16 16">
@@ -1847,6 +1932,11 @@ const LANGS = {
     pmCopyNote: "priced as billed",
     spInvite: (adj) => "Priced as billed, this range comes to " + adj + ". The switch in the header applies that to every figure on the page.",
     spNames: { fast: "Fast Mode", standard: "Standard", batch: "Batch API", priority: "Priority Tier", unknown: "Not recorded" },
+    pjTitle: "Where it was spent",
+    pjTip: "Built from the working directory on each transcript record, and only on a build that asked for it. Only the last path segment is kept — the project folder's own name. Nothing above it is read into this page.",
+    pjUnknown: "No folder recorded",
+    pjBadge: "Project names included",
+    pjBadgeTip: "This page was built with --projects, so your project folder names are in it — on screen, and in any JSON exported from it. Anyone you share the file with can read them. Rebuild without --projects to leave them out.",
     unitReqs: "requests",
     sessTitle: "Costliest sessions",
     sessTip: "Every billed request in one conversation, added up. Figures are whole-session, so a session that ran partly outside this range still shows what all of it cost. A session is named by when it ran — the id is a one-way hash and is never shown.",
@@ -2078,6 +2168,11 @@ const LANGS = {
     pmCopyNote: "실청구 기준",
     spInvite: (adj) => "실청구 기준으로는 이 기간이 " + adj + "입니다. 상단의 전환 버튼을 누르면 페이지의 모든 금액에 적용됩니다.",
     spNames: { fast: "Fast Mode", standard: "표준", batch: "Batch API", priority: "Priority Tier", unknown: "기록 없음" },
+    pjTitle: "어디에 썼는지",
+    pjTip: "각 기록의 작업 디렉터리에서 만들며, 직접 켠 빌드에서만 수집합니다. 경로의 마지막 조각 — 프로젝트 폴더 이름 — 만 남기고 그 위의 경로는 이 페이지에 들어오지 않습니다.",
+    pjUnknown: "폴더 기록 없음",
+    pjBadge: "프로젝트 이름 포함",
+    pjBadgeTip: "이 페이지는 --projects로 만들어져 프로젝트 폴더 이름이 들어 있습니다. 화면에도, 여기서 내보내는 JSON에도 남으며 파일을 받은 사람은 누구나 읽을 수 있습니다. 빼려면 --projects 없이 다시 만드세요.",
     unitReqs: "요청",
     sessTitle: "가장 비쌌던 세션",
     sessTip: "한 대화에서 청구된 요청을 모두 합산한 값입니다. 세션 전체 기준이라 이 기간 밖까지 이어진 세션도 전체 비용을 그대로 보여줍니다. 세션은 실행된 시각으로 표시하며, 세션 id는 단방향 해시라 화면에 나오지 않습니다.",
@@ -2292,6 +2387,11 @@ const LANGS = {
     pmCopyNote: "実請求ベース",
     spInvite: (adj) => "実請求ベースでは、この期間は " + adj + " になります。ヘッダーの切り替えでページ全体の金額に適用されます。",
     spNames: { fast: "Fast Mode", standard: "標準", batch: "Batch API", priority: "Priority Tier", unknown: "記録なし" },
+    pjTitle: "どこに使ったか",
+    pjTip: "各レコードの作業ディレクトリから作ります。有効にしたビルドでのみ収集し、パスの最後の要素 — プロジェクトフォルダ名 — だけを残します。それより上の階層はこのページに入りません。",
+    pjUnknown: "フォルダの記録なし",
+    pjBadge: "プロジェクト名を含む",
+    pjBadgeTip: "このページは --projects 付きで生成されているため、プロジェクトのフォルダ名が含まれています。画面にも、ここから書き出す JSON にも残り、ファイルを受け取った人は誰でも読めます。含めたくない場合は --projects なしで作り直してください。",
     unitReqs: "リクエスト",
     sessTitle: "費用の大きいセッション",
     sessTip: "ひとつの会話で課金されたリクエストをすべて合計した値です。セッション単位の集計なので、この期間の外にまたがったセッションも全体の費用を表示します。セッションは実行時刻で表し、セッションIDは一方向ハッシュのため画面には出しません。",
@@ -2501,6 +2601,11 @@ const LANGS = {
     pmCopyNote: "按实际计费",
     spInvite: (adj) => "按实际计费，该期间为 " + adj + "。顶部的开关会把它应用到本页所有金额。",
     spNames: { fast: "Fast Mode", standard: "标准", batch: "Batch API", priority: "Priority Tier", unknown: "未记录" },
+    pjTitle: "花在哪里",
+    pjTip: "取自每条记录中的工作目录，且仅在主动开启的构建中收集。只保留路径的最后一段 —— 项目文件夹本身的名字 —— 其上层路径不会进入本页面。",
+    pjUnknown: "未记录文件夹",
+    pjBadge: "包含项目名",
+    pjBadgeTip: "此页面是用 --projects 生成的，因此包含你的项目文件夹名：既显示在页面上，也留在从这里导出的 JSON 里，拿到文件的人都能读到。若不想包含，请去掉 --projects 重新生成。",
     unitReqs: "次请求",
     sessTitle: "花费最高的会话",
     sessTip: "把一次会话中所有计费请求加总。数字按整个会话统计，因此跨出该期间的会话仍会显示它全部的花费。会话以运行时间标识，会话 id 是单向哈希，不会显示出来。",
@@ -2710,6 +2815,11 @@ const LANGS = {
     pmCopyNote: "según factura",
     spInvite: (adj) => "Según factura, este periodo asciende a " + adj + ". El conmutador de la cabecera lo aplica a todas las cifras de la página.",
     spNames: { fast: "Fast Mode", standard: "Estándar", batch: "Batch API", priority: "Priority Tier", unknown: "Sin registrar" },
+    pjTitle: "En qué se gastó",
+    pjTip: "Se construye a partir del directorio de trabajo de cada registro, y solo en una compilación que lo pidió. Se conserva únicamente el último segmento de la ruta — el nombre de la carpeta del proyecto —; nada por encima llega a esta página.",
+    pjUnknown: "Sin carpeta registrada",
+    pjBadge: "Incluye nombres de proyecto",
+    pjBadgeTip: "Esta página se generó con --projects, así que contiene los nombres de las carpetas de tus proyectos: en pantalla y en cualquier JSON que exportes desde aquí. Quien reciba el archivo podrá leerlos. Vuelve a generarla sin --projects para dejarlos fuera.",
     unitReqs: "peticiones",
     sessTitle: "Sesiones más caras",
     sessTip: "Todas las peticiones facturadas de una conversación, sumadas. Las cifras son de la sesión completa, así que una sesión que se salió de este periodo sigue mostrando lo que costó entera. Una sesión se identifica por cuándo se ejecutó — el id es un hash de un solo sentido y no se muestra nunca.",
@@ -3084,7 +3194,7 @@ function rangeTip(id) {
 
 function aggregate(keys) {
   const sessions = new Set(); const hours = new Array(24).fill(0);
-  const models = {}; const sp = {}; const costs = {};
+  const models = {}; const sp = {}; const proj = {}; const costs = {};
   let msgs = 0, tokens = 0, cost = 0, covBase = 0, covKnown = 0;
   // cw here means "all cache writes" — the 5m and 1h tiers are summed for display but priced
   // separately (1.25x vs 2x input), which is why costParts is accumulated, not derived
@@ -3137,8 +3247,18 @@ function aggregate(keys) {
         e.i += arr[0]; e.o += arr[1]; e.cw += arr[2]; e.cr += arr[3]; e.c1h += arr[4]; e.msg += arr[5];
       }
     }
+    // Same shape as sp and for the same reason: rates differ 12x across models, so a project's
+    // cost is summed model by model rather than blended. d.proj is absent on every build that did
+    // not opt in, which is what makes this loop a no-op by default rather than a zero.
+    for (const [id, byModel] of Object.entries(d.proj || {})) {
+      const bucket = (proj[id] ??= {});
+      for (const [m, arr] of Object.entries(byModel)) {
+        const e = (bucket[m] ??= { i: 0, o: 0, cw: 0, cr: 0, c1h: 0, msg: 0 });
+        e.i += arr[0]; e.o += arr[1]; e.cw += arr[2]; e.cr += arr[3]; e.c1h += arr[4]; e.msg += arr[5];
+      }
+    }
   }
-  return { sessions: sessions.size, hours, models, sp, costs, msgs, tokens, cost, totals, costParts, noCache,
+  return { sessions: sessions.size, hours, models, sp, proj, costs, msgs, tokens, cost, totals, costParts, noCache,
            coverage: covBase > 0 ? covKnown / covBase : 1,
            activeDays: keys.filter((k) => DATA.days[k].msgs > 0).length };
 }
@@ -3312,6 +3432,7 @@ function render() {
   // rates() fills the unpriced set as a side effect of the aggregate above — must come after it
   renderPriceWarning();
   renderPriceMode(a);
+  paintProjectBadge();
   const peakLabel = peak === null ? "—" : T("hour", peak);
 
   const labels = T("cards"), tips = T("cardTips");
@@ -4027,6 +4148,56 @@ function speedHTML(a) {
     (plain ? '<div class="sphint">' + T("spHint") + "</div>" : "");
 }
 
+// --- where it was spent: the opt-in per-project breakdown ---------------------------------
+//
+// Present only on a payload built with --projects (CLI) or the project checkbox (web). Off is the
+// default, and off means DATA.projects is absent entirely — so this returns "" and the Models tab
+// is byte-identical to what it was before the feature existed. No placeholder, no ghost card, and
+// nothing inviting anyone to turn it on: a privacy control that nags is a privacy control people
+// switch on to stop the nagging.
+const pjCost = (byModel) =>
+  Object.entries(byModel).reduce((t, [m, v]) => t + mCost(m, v), 0);
+// Two folders can share a name — "~/work/api" and "~/oss/api" — and they are deliberately kept
+// apart in the data, because merging them would report one project's money under another's name.
+// Two identical rows read as a bug, so the bucket id is shown alongside the name in exactly the
+// case where the name alone is ambiguous, and nowhere else.
+function pjLabel(id, dupes) {
+  const raw = (DATA.projects && DATA.projects[id]) || "";
+  if (!raw) return T("pjUnknown");
+  return attr(raw) + (dupes[raw] > 1 ? ' <span class="pjid">' + attr(id) + "</span>" : "");
+}
+// The badge is a statement about the payload, not about the language or the range, so it is driven
+// by the data rather than by applyStatic() or render(). The condition is "names are actually in
+// this file": a build made with --projects that found no cwd anywhere has nothing to disclose, and
+// would be lying if it claimed otherwise.
+function paintProjectBadge() {
+  const el = document.getElementById("pjbadge");
+  if (!el) return; // renderNoData() replaces .wrap wholesale
+  el.hidden = !(DATA.projects && Object.keys(DATA.projects).length);
+}
+function projHTML(a) {
+  if (!DATA.projects) return "";
+  const rows = Object.entries(a.proj || {}).sort((x, y) => spTokens(y[1]) - spTokens(x[1]));
+  if (!rows.length) return "";
+  const total = rows.reduce((t, [, v]) => t + spTokens(v), 0) || 1;
+  const max = spTokens(rows[0][1]) || 1;
+  const dupes = {};
+  rows.forEach(([id]) => {
+    const raw = (DATA.projects && DATA.projects[id]) || "";
+    if (raw) dupes[raw] = (dupes[raw] || 0) + 1;
+  });
+  return '<div class="sptitle"><span data-tip="' + attr(T("pjTip")) + '">' + icon("folder") +
+    "<span>" + T("pjTitle") + "</span></span></div>" +
+    rows.map(([id, v], i) => {
+      const tk = spTokens(v);
+      return '<div class="mrow pjrow" style="animation-delay:' + i * 60 + 'ms"><div class="mtop"><span class="mname">' +
+        pjLabel(id, dupes) + '</span><span class="mmeta"><span data-exact="' + fmtUsdCents(pjCost(v)) + '">' +
+        fmtUsd(pjCost(v)) + "</span> · " + exb(tk) + " " + T("unitTokens") + " · " +
+        spMsgs(v).toLocaleString() + " " + T("unitMsgs") + " · " + pctStr(tk, total) +
+        '</span></div><div class="bar"><i style="width:' + Math.max(2, (tk / max) * 100) + '%"></i></div></div>';
+    }).join("");
+}
+
 // --- costliest sessions --------------------------------------------------------------------
 //
 // A session is the unit a person actually remembers — "that refactor that ran all afternoon" — and
@@ -4121,7 +4292,7 @@ function renderModels(a) {
         '</span><span class="mmeta"><span data-exact="' + fmtUsdCents(a.costs[m] || 0) + '">' + fmtUsd(a.costs[m] || 0) + "</span> · " +
         exb(mTok(v)) + " " + T("unitTokens") + " · " + v.msg.toLocaleString() + " " + T("unitMsgs") +
         '</span></div><div class="bar"><i style="width:' + Math.max(2, (mTok(v) / max) * 100) + '%"></i></div></div>'
-      ).join("") + speedHTML(a)
+      ).join("") + projHTML(a) + speedHTML(a)
     : '<div class="empty">' + T("emptyRange") + "</div>") + sessionsHTML();
 }
 
@@ -4981,6 +5152,13 @@ async function pollLive() {
       DATA.days = fresh.days;
       // the cached scalars are keyed by day and derived from DATA.days, which just changed
       for (const k of Object.keys(factorCache)) delete factorCache[k];
+      // Project ids are ordinals assigned in first-seen order by whichever scan produced the
+      // payload, so a fresh days map is only meaningful against the name map that came with it.
+      // Carrying the old one over would silently relabel every bucket the moment a new project
+      // appears; dropping it when the server is restarted without --projects is the same rule.
+      if (fresh.projects) DATA.projects = fresh.projects;
+      else delete DATA.projects;
+      paintProjectBadge();
       dayKeys.length = 0;
       dayKeys.push(...Object.keys(DATA.days).sort());
       // first usage arriving while the empty-state shell is up: the dashboard markup is gone,
@@ -5071,13 +5249,34 @@ Options
       --root <path>    transcript folder to scan; repeatable
       --config <path>  JSON config file (default: ccstats.config.json beside this script)
       --init-config    write a commented starter config and exit
+      --projects       break usage down by project, using your project FOLDER NAMES
+                       (off by default — read the Projects section below first)
   -h, --help           this text
 
 Privacy
   Reads only usage metadata from the transcripts Claude Code already writes locally:
-  timestamps, model names, token counts, and a hashed session id. Never reads message
-  content, prompts, file paths, or project names. Makes no network requests, and the
-  page it generates makes none either — fonts and data are inlined.
+  timestamps, model names, token counts, and a hashed session id. Message content and
+  prompts are never read, at any setting. Nothing identifying your projects reaches the
+  output unless you pass --projects. Makes no network requests, and the page it
+  generates makes none either — fonts and data are inlined.
+
+Projects (--projects, off by default)
+  Without it, no project information of any kind reaches the output. The field is not
+  empty, it is not there at all, and nothing reads the working directory.
+
+  With it, ccstats reads the cwd recorded on each transcript record and keeps the LAST
+  PATH SEGMENT ONLY — the project folder's own name. "/Users/you/work/acme-billing"
+  becomes "acme-billing". The directories above it are never read into the page, so your
+  directory layout does not travel with the file.
+
+  Be clear about what that still gives away. A folder name is often the name of a client,
+  an employer, an unannounced product, or an acquisition. The page prints those names
+  next to what you spent in each, and anyone you send the file to can read them.
+
+  And note the one case the "last segment only" rule does not protect: if you ran Claude
+  Code straight from your home directory, the last segment IS your username. A drive root
+  lands as "C:" for the same reason. Check the list before you share the page — it is on
+  the Models tab, and a page built this way says so in its header.
 
 Data location
   Auto-detected from CLAUDE_CONFIG_DIR, then ~/.claude/projects, then
@@ -5130,6 +5329,7 @@ function parseArgs(argv) {
     else if (v === "--root") a.roots.push(resolve(next()));
     else if (v === "--config") a.config = next();
     else if (v === "--init-config") a.init = true;
+    else if (v === "--projects") a.projects = true;
     else if (v.startsWith("-")) { console.error("ccstats: unknown option " + v + "\n"); a.help = true; }
     else { console.error("ccstats: unexpected argument " + JSON.stringify(v) + "\n"); a.help = true; }
   }
@@ -5201,7 +5401,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(1);
   }
 
-  const build = () => buildData({ roots });
+  // args.projects is the only way --projects reaches the collector; buildData falls back to the
+  // config file's own key, so both routes stay explicit and neither defaults to on.
+  const build = () => buildData({ roots, projects: args.projects === true });
 
   if (args.serve) {
     const { createServer } = await import("node:http");

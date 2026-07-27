@@ -187,6 +187,12 @@ if (embedded) {
     Object.keys(sess).length + " kept, " + data.sessionsSeen + " seen");
   // The hash is a DOM key, never a label — the raw id must not survive into the session bucket.
   check("session keys are hashed here too", !Object.keys(sess).some((k) => k.startsWith("sess-")));
+
+  // The fixture writes a cwd on every record, so this build had project data available and did
+  // not take it. Absent, not empty: a reader has to be able to tell "not collected" from
+  // "collected, found nothing", and only a missing key says the first one.
+  check("project data is absent without the opt-in",
+    !("projects" in data) && !Object.values(data.days).some((d) => "proj" in d));
 }
 check("csv export reaches the artifact",
   html.includes('data-act="csv"') && html.includes("cache_write_1h_tokens"));
