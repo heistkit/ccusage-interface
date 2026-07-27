@@ -17,6 +17,19 @@ node ccstats.mjs --serve   # live dashboard on http://127.0.0.1:8743
 - **Estimated API cost** per model, with cache-write (1.25×) and cache-read (0.1×) priced
   separately — cache read is usually the overwhelming majority of tokens and a large share of
   the bill, and blending it into one rate hides that.
+- **A Standard / As billed switch** in the header. Standard prices everything at each model's list
+  rate, which is what any two dashboards can be compared on; As billed applies the Fast Mode
+  premium and the Batch discount your transcripts actually recorded, to every figure on the page.
+  Traffic whose serving mode was never recorded is carried at standard rates rather than guessed
+  at, so the as-billed total is a floor — and the page says what share that is.
+- **What the cache saved** — the same traffic priced with no cache at all. Cache reads and writes
+  are both tokens you really sent, so the counterfactual bills each at the full input rate and
+  moves nothing else. It can come out negative: filling a cache costs 1.25× or 2× and only repays
+  on reuse, and the card says so rather than clamping at zero.
+- **Costliest sessions** — a session is the unit you actually remember, and it is the one axis the
+  day and model buckets cannot express, because sessions cross midnight. Named by when they ran;
+  the session id is a one-way hash and is never shown.
+- **Ranges**: All / 90d / 30d / 7d / this month / last month, with a month-to-date pace line.
 - **Today card** — cost split by token class, a 24-bar hourly spend strip, per-model rows,
   averages per day / active hour / session / message, and a collapsible today-vs-yesterday table.
 - **Heatmap + daily chart** with per-day tooltips, streaks, and a record-day marker.
@@ -24,7 +37,9 @@ node ccstats.mjs --serve   # live dashboard on http://127.0.0.1:8743
   a **how it was served** card: Fast Mode, the Batch API, and Priority Tier split out from
   standard traffic, read from `usage.speed` and `usage.service_tier` in the transcripts.
 - **Right-click anything** to copy just that scope: a heatmap day, an hour bar, a model row, a
-  stat card. Right-click the background for the whole-range summary.
+  session, a stat card. Right-click the background for the whole-range summary, or export the
+  whole history as JSON (lossless) or CSV (one row per day per model, RFC 4180, no BOM).
+- **Per-project spend**, off by default and opt-in only — see [Projects](#projects) below.
 - English / 한국어, light / dark, and a few easter eggs.
 
 ## Install
@@ -127,17 +142,42 @@ node ccstats.mjs --serve --open  ...and open it in your browser
 | `--root <path>` | transcript folder to scan; repeatable |
 | `--config <path>` | JSON config file (default `ccstats.config.json` beside the script) |
 | `--init-config` | write a commented starter config and exit |
+| `--projects` | break usage down by project folder name — **off by default**, read [Projects](#projects) first |
 | `-h, --help` | full help text |
 
 Transcript location is auto-detected from `CLAUDE_CONFIG_DIR`, then `~/.claude/projects`, then
 `~/.config/claude/projects`. Override with `--root` or `roots` in the config file.
 
+## Projects
+
+`--projects` is the one option that changes what the tool is willing to put in a file, so it is
+off by default and it fails closed.
+
+**Without it**, no project information of any kind reaches the output. The field is not empty, it
+is not there at all, and nothing reads the working directory. That is the difference that lets
+someone reading an exported payload tell "this build did not collect projects" from "it did and
+found none".
+
+**With it**, ccstats reads the `cwd` on each transcript record and keeps the **last path segment
+only** — the project folder's own name. `/Users/you/work/acme-billing` becomes `acme-billing`. The
+directories above it are never read into the page, so your directory layout does not travel with
+the file. Bucket ids are ordinals (`p0`, `p1`), never hashes of the path: a hash would be derived
+from the exact string this is meant to keep out of the file, and with the folder name printed in
+plain text beside it, anyone who could guess the parent directories could confirm them against it.
+
+Be clear about what a folder name still gives away. It is often the name of a client, an employer,
+an unannounced product, or an acquisition, and the page prints it next to what you spent there.
+**And one case the rule does not protect:** if you ran Claude Code straight from your home
+directory, the last segment *is* your username; a drive root lands as `C:`. A page built this way
+says so in its header, so you can tell before you share it — but check the list first.
+
 ## Privacy
 
 ccstats reads **usage metadata only**: timestamps, model names, token counts, and a truncated
-hash of each session id. It never reads message content, prompts, file paths, or project names.
-It makes no network requests, and neither does the page it generates — fonts and data are inlined,
-so the output works from `file://` and offline.
+hash of each session id. Message content and prompts are never read, at any setting. Nothing
+identifying your projects reaches the output unless you pass `--projects` — see above. It makes no
+network requests, and neither does the page it generates — fonts and data are inlined, so the
+output works from `file://` and offline.
 
 The generated `ccstats.html` does embed *your* numbers, though, so it is gitignored here. If you
 share one, know that you are sharing your day-by-day token counts and estimated spend.
@@ -155,11 +195,17 @@ Subscription allowances and negotiated discounts are **not** modeled, so this is
 is what the same work would cost at API list price. Override rates via `pricing` in the config
 file if yours differ.
 
-Every figure on the page is priced at **standard** rates. The one exception is the *how it was
-served* card, which applies the Fast Mode premium (2×) and the Batch API discount (0.5×) to its
-own rows — and says so inline whenever that makes its total differ from the rest of the page.
-Priority Tier has no published flat multiplier, so it gets its own row but is costed at standard
-rates rather than being given an invented number.
+Which rates apply is your choice, in the header. **Standard** prices every figure at each model's
+list rate. **As billed** applies the Fast Mode premium (2×) and the Batch API discount (0.5×) that
+your transcripts recorded, to every figure on the page — headline, cards, hourly strip, model
+rows, tooltips, copied text and the CSV. Priority Tier has no published flat multiplier, so it
+gets its own row but is costed at standard rates rather than being given an invented number, and
+requests whose serving mode was never recorded are carried at standard rates rather than assumed
+to be standard. Both of those make the as-billed total a floor, which the page states wherever it
+shows one.
+
+Token counts never move between modes. A billing multiplier inside a token count would be a
+fabrication, so the heatmap, the daily chart and the wallet donut are identical in both.
 
 ## Credits
 
