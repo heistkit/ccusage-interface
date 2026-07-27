@@ -67,6 +67,9 @@
   .drop.over { border-color: var(--accent); background: var(--chip-active); transform: scale(1.008); }
   .drop .di { width: 46px; height: 46px; color: var(--accent); stroke-width: 1.6; }
   .drop h2 { font-size: 24px; font-weight: 600; letter-spacing: -.02em; margin: 14px 0 6px; }
+  /* Set at the same weight as the heading around it — a code span left at the default weight
+     reads as a different typeface dropped into the sentence rather than one word of it. */
+  .drop h2 code { font-size: .84em; letter-spacing: -.01em; }
   .drop p { color: var(--muted); margin: 0 0 22px; font-size: 16px; }
   .btnrow { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
   button {
@@ -81,9 +84,13 @@
   .ghost:hover:not(:disabled) { background: var(--cell); border-radius: 4px; }
   button svg { width: 18px; height: 18px; }
   .hint { margin-top: 20px; font-size: 14.5px; color: var(--muted); }
-  .hint code { background: var(--chip); border: 1px solid var(--border); border-radius: 6px;
-               padding: 2px 7px; font-family: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
-               font-size: 13.5px; white-space: nowrap; }
+  /* Every inline code span, not just the ones in .hint. Scoping the font stack to one selector
+     let the others fall through to the browser's default monospace, which on Windows is a
+     different face at a different optical size and looks like a mistake beside Geist. */
+  code { font-family: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+         font-weight: inherit; }
+  .hint code, .card code { background: var(--chip); border: 1px solid var(--border);
+               border-radius: 6px; padding: 2px 7px; font-size: 13.5px; white-space: nowrap; }
   .hint .row { margin-top: 7px; }
   input[type=file] { display: none; }
 
@@ -169,7 +176,7 @@
 
   <div class="drop" id="drop">
     <svg class="icon di" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M12 17v-6"/><path d="m9.5 13.5 2.5-2.5 2.5 2.5"/></svg>
-    <h2>Drop your <code style="font-size:.85em">projects</code> folder here</h2>
+    <h2>Drop your <code>projects</code> folder here</h2>
     <p>Or pick it below. Nothing is sent anywhere — the reading happens in this tab.</p>
     <div class="btnrow">
       <button class="primary" id="pickDir" type="button">
