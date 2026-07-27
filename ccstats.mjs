@@ -674,7 +674,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
     .today .tcmpa, .today .tcmpb, .today .tcmpd,
     .wcard .wbalance, .wcard .mcost2, .wcard .block b, .wcard .block .pct,
     .dval, .dpct, .dcenter b,
-    .mrow .mmeta,
+    .mrow .mmeta, .sphint, .pmnote b,
     #liveCost, #liveCount, #liveMeta,
     .cewrap .ceval, .cewrap .cepct, .cewrap .ceamt, .cewrap .cechips b, .cewrap .cechips span,
     .foot, .irl-panel
@@ -1450,6 +1450,20 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   .cewrap .cechips em:hover { background: var(--cell); }
   .cewrap .cechips em b { color: var(--text); font-weight: 650; }
   .cewrap .cenote { font-size: 13.5px; color: var(--muted); line-height: 1.55; margin-top: 10px; }
+
+  /* --- pricing lens: a second global pill group in an already-full top bar, and the coverage line
+         that has to travel with any as-billed figure --- */
+  .top > div { flex-wrap: wrap; row-gap: 6px; }
+  .pmnote {
+    display: flex; align-items: flex-start; gap: 8px;
+    background: var(--chip); border-radius: 10px; padding: 9px 12px; margin-bottom: 12px;
+    font-size: 14.5px; line-height: 1.45; color: var(--muted);
+  }
+  .pmnote .icon {
+    flex: none; width: 16px; height: 16px; margin-top: 2px;
+    vertical-align: 0; color: var(--accent);
+  }
+  .pmnote b { color: var(--text); font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -1529,6 +1543,12 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
         <button data-range="30" data-i18n="r30">30d</button>
         <button data-range="7" data-i18n="r7">7d</button>
       </div>
+      <!-- reuses .ranges chrome; the on-state and both tooltips are set from priceMode in
+           applyStatic, so a persisted choice is already correct on first paint -->
+      <div class="ranges pmswitch" id="pmswitch">
+        <button data-pm="standard" data-i18n="pmStandard">Standard</button>
+        <button data-pm="billed" data-i18n="pmBilled">As billed</button>
+      </div>
       <div class="langpick" id="langpick" data-tip-key="tipLang"></div>
       <!-- hidden outright where the Fullscreen API is unavailable (iOS Safari), rather than
            offering a control that silently does nothing -->
@@ -1565,7 +1585,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
   <div id="overview">
     <div class="coststrip" id="coststrip">
       <div>
-        <div class="clabel"><span data-i18n="costLabel" data-tip-key="costTip">Est. API cost</span> <span id="costrange"></span></div>
+        <div class="clabel"><span id="costlabel" data-i18n="costLabel" data-tip-key="costTip">Est. API cost</span> <span id="costrange"></span></div>
         <div class="cval" id="costval"></div>
       </div>
       <div class="cbreak" id="costbreak"></div>
@@ -1578,6 +1598,7 @@ const TEMPLATE = String.raw`<!DOCTYPE html>
         <div class="irl-panel" id="irlPanel"></div>
       </div>
     </div>
+    <div id="pmnote"></div>
     <div id="pricewarn"></div>
     <div class="cewrap" id="cache"></div>
     <div class="cards" id="cards"></div>
@@ -1692,7 +1713,14 @@ const LANGS = {
     spTitle: "How it was served",
     spTip: "From usage.speed and usage.service_tier in the transcript. Fast Mode bills at 2× the standard rate, the Batch API at half. Priority Tier has no flat published multiplier, so it is costed at standard rates here.",
     spHint: "Fast Mode and batched runs would appear here as their own rows.",
-    spDelta: (base, adj) => "Every other figure on this page is priced at standard rates — " + base + " for this range. Applying the Fast Mode premium and the Batch discount moves it to " + adj + ".",
+    pmStandard: "Standard", pmBilled: "As billed",
+    pmTipStandard: "Price every figure at each model's list rate. This is the mode any two dashboards can be compared on.",
+    pmTipBilled: "Apply the 2× Fast Mode premium and the 0.5× Batch discount recorded in the transcript, to every figure on the page.",
+    costLabelBilled: "Est. cost as billed",
+    costTipBilled: "List rates, plus the 2× Fast Mode premium and the 0.5× Batch discount recorded in the transcript. Still an estimate, not a bill.",
+    pmCoverage: (pct) => "Serving mode was never recorded for <b>" + pct + "%</b> of this range's spend. That share is carried at standard rates rather than guessed at, so this total is a floor.",
+    pmCopyNote: "priced as billed",
+    spInvite: (adj) => "Priced as billed, this range comes to " + adj + ". The switch in the header applies that to every figure on the page.",
     spNames: { fast: "Fast Mode", standard: "Standard", batch: "Batch API", priority: "Priority Tier", unknown: "Not recorded" },
     ctxCopy: "Copy summary", ctxExport: "Export JSON", ctxTheme: "Toggle theme",
     ctxBook: "Reroll book", ctxParty: "Party mode", ctxLang: "한국어",
@@ -1886,7 +1914,14 @@ const LANGS = {
     spTitle: "어떻게 처리됐나",
     spTip: "대화 기록의 usage.speed와 usage.service_tier에서 읽습니다. Fast Mode는 표준 단가의 2배, Batch API는 절반으로 계산합니다. Priority Tier는 공개된 고정 배수가 없어 표준 단가로 계산합니다.",
     spHint: "Fast Mode나 배치 실행을 쓰면 여기에 별도 항목으로 나타납니다.",
-    spDelta: (base, adj) => "이 페이지의 다른 금액은 모두 표준 단가 기준입니다 — 이 기간은 " + base + ". Fast Mode 할증과 Batch 할인을 반영하면 " + adj + "이 됩니다.",
+    pmStandard: "표준", pmBilled: "실청구 기준",
+    pmTipStandard: "모든 금액을 모델별 공시 단가로 계산합니다. 다른 대시보드와 비교할 수 있는 기준입니다.",
+    pmTipBilled: "트랜스크립트에 기록된 Fast Mode 2배 할증과 Batch 0.5배 할인을 페이지의 모든 금액에 적용합니다.",
+    costLabelBilled: "예상 실청구 비용",
+    costTipBilled: "공시 단가에 트랜스크립트에 기록된 Fast Mode 2배 할증과 Batch 0.5배 할인을 반영했습니다. 여전히 추정치이며 청구서가 아닙니다.",
+    pmCoverage: (pct) => "이 기간 지출의 <b>" + pct + "%</b>는 서빙 방식이 기록되어 있지 않습니다. 추측하는 대신 표준 단가로 계산했으므로 이 합계는 하한선입니다.",
+    pmCopyNote: "실청구 기준",
+    spInvite: (adj) => "실청구 기준으로는 이 기간이 " + adj + "입니다. 상단의 전환 버튼을 누르면 페이지의 모든 금액에 적용됩니다.",
     spNames: { fast: "Fast Mode", standard: "표준", batch: "Batch API", priority: "Priority Tier", unknown: "기록 없음" },
     ctxCopy: "요약 복사", ctxExport: "JSON 내보내기", ctxTheme: "테마 전환",
     ctxBook: "다른 책으로", ctxParty: "파티 모드", ctxLang: "English",
@@ -2063,7 +2098,14 @@ const LANGS = {
     spTitle: "処理のされ方",
     spTip: "履歴の usage.speed と usage.service_tier から読み取ります。Fast Mode は標準単価の2倍、Batch API は半額で計算します。Priority Tier は公開された固定倍率がないため、標準単価で計算しています。",
     spHint: "Fast Mode やバッチ実行を使うと、ここに個別の行として表示されます。",
-    spDelta: (base, adj) => "このページの他の金額はすべて標準単価です — この期間は " + base + "。Fast Mode の割増と Batch の割引を反映すると " + adj + " になります。",
+    pmStandard: "標準", pmBilled: "実請求ベース",
+    pmTipStandard: "すべての金額をモデルごとの公表単価で計算します。他のダッシュボードと比較できる基準です。",
+    pmTipBilled: "トランスクリプトに記録された Fast Mode の2倍割増と Batch の0.5倍割引を、ページのすべての金額に適用します。",
+    costLabelBilled: "実請求ベースの推定コスト",
+    costTipBilled: "公表単価に、トランスクリプトに記録された Fast Mode の2倍割増と Batch の0.5倍割引を反映しています。あくまで推定であり、請求書ではありません。",
+    pmCoverage: (pct) => "この期間の支出のうち <b>" + pct + "%</b> は配信モードが記録されていません。推測せず標準単価で計上しているため、この合計は下限値です。",
+    pmCopyNote: "実請求ベース",
+    spInvite: (adj) => "実請求ベースでは、この期間は " + adj + " になります。ヘッダーの切り替えでページ全体の金額に適用されます。",
     spNames: { fast: "Fast Mode", standard: "標準", batch: "Batch API", priority: "Priority Tier", unknown: "記録なし" },
     unitTokens: "トークン", unitMsgs: "メッセージ", unitSessions: "セッション",
     ctxCopy: "サマリーをコピー", ctxExport: "JSONを書き出し", ctxTheme: "テーマ切り替え",
@@ -2235,7 +2277,14 @@ const LANGS = {
     spTitle: "以何种方式处理",
     spTip: "读取自记录中的 usage.speed 与 usage.service_tier。Fast Mode 按标准单价的 2 倍计费，Batch API 按半价。Priority Tier 没有公开的固定倍率，这里按标准单价计算。",
     spHint: "使用 Fast Mode 或批处理后，会在这里单独成行。",
-    spDelta: (base, adj) => "本页其他金额均按标准单价计算 —— 该期间为 " + base + "。计入 Fast Mode 溢价与 Batch 折扣后为 " + adj + "。",
+    pmStandard: "标准", pmBilled: "按实际计费",
+    pmTipStandard: "所有金额按各模型的公开单价计算，可与其他面板对照。",
+    pmTipBilled: "把转录中记录的 Fast Mode 2× 溢价与 Batch 0.5× 折扣应用到本页所有金额。",
+    costLabelBilled: "按实际计费的预估花费",
+    costTipBilled: "公开单价，加上转录中记录的 Fast Mode 2× 溢价与 Batch 0.5× 折扣。仍是估算，不是账单。",
+    pmCoverage: (pct) => "该期间有 <b>" + pct + "%</b> 的花费没有记录服务方式。这部分按标准单价计入而非猜测，因此该总额是下限。",
+    pmCopyNote: "按实际计费",
+    spInvite: (adj) => "按实际计费，该期间为 " + adj + "。顶部的开关会把它应用到本页所有金额。",
     spNames: { fast: "Fast Mode", standard: "标准", batch: "Batch API", priority: "Priority Tier", unknown: "未记录" },
     unitTokens: "token", unitMsgs: "条消息", unitSessions: "个会话",
     ctxCopy: "复制摘要", ctxExport: "导出 JSON", ctxTheme: "切换主题",
@@ -2407,7 +2456,14 @@ const LANGS = {
     spTitle: "Cómo se atendió",
     spTip: "Leído de usage.speed y usage.service_tier en la transcripción. Fast Mode cuesta 2× la tarifa estándar; la Batch API, la mitad. Priority Tier no tiene un multiplicador fijo publicado, así que aquí se calcula a tarifa estándar.",
     spHint: "Fast Mode y las ejecuciones por lotes aparecerían aquí como filas propias.",
-    spDelta: (base, adj) => "El resto de las cifras de esta página usan la tarifa estándar: " + base + " en este periodo. Con el recargo de Fast Mode y el descuento de Batch pasa a " + adj + ".",
+    pmStandard: "Estándar", pmBilled: "Según factura",
+    pmTipStandard: "Calcula cada cifra con la tarifa pública de cada modelo. Es el modo en que dos paneles cualesquiera son comparables.",
+    pmTipBilled: "Aplica a todas las cifras de la página el recargo 2× de Fast Mode y el descuento 0,5× de Batch registrados en la transcripción.",
+    costLabelBilled: "Coste estimado según factura",
+    costTipBilled: "Tarifas públicas, más el recargo 2× de Fast Mode y el descuento 0,5× de Batch registrados en la transcripción. Sigue siendo una estimación, no una factura.",
+    pmCoverage: (pct) => "El <b>" + pct + "%</b> del gasto de este periodo no tiene modo de servicio registrado. Esa parte se contabiliza a tarifa estándar en lugar de estimarse, así que este total es un mínimo.",
+    pmCopyNote: "según factura",
+    spInvite: (adj) => "Según factura, este periodo asciende a " + adj + ". El conmutador de la cabecera lo aplica a todas las cifras de la página.",
     spNames: { fast: "Fast Mode", standard: "Estándar", batch: "Batch API", priority: "Priority Tier", unknown: "Sin registrar" },
     unitTokens: "tokens", unitMsgs: "mensajes", unitSessions: "sesiones",
     ctxCopy: "Copiar resumen", ctxExport: "Exportar JSON", ctxTheme: "Cambiar tema",
@@ -2672,6 +2728,10 @@ let redacted = localStorage.getItem("ccstats-redacted") === "1";
 // today-card yesterday comparison; renderToday rebuilds its innerHTML, so the open/closed
 // state has to live out here rather than on the DOM node
 let cmpOpen = localStorage.getItem("ccstats-today-cmp") === "1";
+// Pricing lens. "standard" prices every figure at each model's list rate, which is what any two
+// dashboards can be compared on; "billed" applies the Fast Mode premium and the Batch discount the
+// transcript actually recorded. Standard is the default because it never has to approximate.
+let priceMode = localStorage.getItem("ccstats-price-mode") === "billed" ? "billed" : "standard";
 
 function keysInRange() {
   if (range === "all") return dayKeys;
@@ -2682,7 +2742,8 @@ function keysInRange() {
 
 function aggregate(keys) {
   const sessions = new Set(); const hours = new Array(24).fill(0);
-  const models = {}; const sp = {}; let msgs = 0, tokens = 0, cost = 0;
+  const models = {}; const sp = {}; const costs = {};
+  let msgs = 0, tokens = 0, cost = 0, covBase = 0, covKnown = 0;
   // cw here means "all cache writes" — the 5m and 1h tiers are summed for display but priced
   // separately (1.25x vs 2x input), which is why costParts is accumulated, not derived
   const totals = { i: 0, o: 0, cw: 0, cr: 0 };
@@ -2696,19 +2757,34 @@ function aggregate(keys) {
     d.sessions.forEach((s) => sessions.add(s));
     d.hours.forEach((h, i) => (hours[i] += h));
     msgs += d.msgs;
+    const ff = dayFactors(k);
     for (const [m, v] of Object.entries(d.models)) {
       const e = (models[m] ??= { i: 0, o: 0, cw: 0, cr: 0, c1h: 0, msg: 0 });
       const h1 = v.c1h || 0;
       e.i += v.i; e.o += v.o; e.cw += v.cw; e.cr += v.cr; e.c1h += h1; e.msg += v.msg;
       totals.i += v.i; totals.o += v.o; totals.cw += v.cw + h1; totals.cr += v.cr;
+      // One scalar for this model on this day, applied to every part as well as the total, so the
+      // four cost parts stay a partition of the figure they sit under in either mode. The no-cache
+      // counterfactual takes it too: a serving premium applies to a request whether or not any of
+      // its prompt came from a cache, so leaving it out would compare a billed bill against a
+      // standard-rate hypothetical.
+      const f = factorOf(ff[m]);
       const [inp, out] = rates(m);
-      costParts.i += v.i * inp / 1e6;
-      costParts.o += v.o * out / 1e6;
-      costParts.cw += (v.cw * 1.25 + h1 * 2) * inp / 1e6;
-      costParts.cr += v.cr * inp * 0.1 / 1e6;
-      noCache.w += (v.cw + h1) * inp / 1e6;
-      noCache.r += v.cr * inp / 1e6;
-      tokens += mTok(v); cost += mCost(m, v);
+      costParts.i += v.i * inp * f / 1e6;
+      costParts.o += v.o * out * f / 1e6;
+      costParts.cw += (v.cw * 1.25 + h1 * 2) * inp * f / 1e6;
+      costParts.cr += v.cr * inp * 0.1 * f / 1e6;
+      noCache.w += (v.cw + h1) * inp * f / 1e6;
+      noCache.r += v.cr * inp * f / 1e6;
+      const c = mCost(m, v) * f;
+      // Per model across the range: a model's billed cost is the sum of its billed days, not its
+      // range tokens times some blended factor, because the serving mix moves day to day.
+      costs[m] = (costs[m] || 0) + c;
+      tokens += mTok(v); cost += c;
+      // Cost-weighted, because it qualifies a cost figure. A model with no sp entry at all is
+      // unrecorded by definition, so it lands in the denominator and not the numerator.
+      covBase += ff[m] ? ff[m].base : mCost(m, v);
+      covKnown += ff[m] ? ff[m].known : 0;
     }
     // Kept per model inside each bucket, not blended: the multipliers below scale a *rate*, and
     // rates differ 12x across models, so a bucket's cost has to be summed model by model.
@@ -2720,7 +2796,9 @@ function aggregate(keys) {
       }
     }
   }
-  return { sessions: sessions.size, hours, models, sp, msgs, tokens, cost, totals, costParts, noCache, activeDays: keys.filter((k) => DATA.days[k].msgs > 0).length };
+  return { sessions: sessions.size, hours, models, sp, costs, msgs, tokens, cost, totals, costParts, noCache,
+           coverage: covBase > 0 ? covKnown / covBase : 1,
+           activeDays: keys.filter((k) => DATA.days[k].msgs > 0).length };
 }
 
 // --- how requests were served: Fast Mode, the Batch API, Priority Tier ---------------------
@@ -2735,8 +2813,46 @@ const spMult = (key) => {
   const [speed, tier] = key.split("|");
   return (SPEED_MULT[speed] || 1) * (TIER_MULT[tier] || 1);
 };
+// Both axes have to be present for a bucket to count as recorded. "unknown|standard" prices at 1x,
+// but that is the absence of evidence, not evidence of standard serving.
+const spKnown = (key) => {
+  const p = key.split("|");
+  return p[0] !== "unknown" && p[1] !== "unknown";
+};
+
+// A day's sp buckets partition exactly the same tokens as that day's models bucket — the collector
+// fills both from one vals array inside one dedup guard, and smoke.mjs asserts the totals agree.
+// mCost is linear in every token field for a fixed model, so a bucket's premium collapses to a
+// scalar on that model's day cost: scale any slice of that (day, model) by it and the slices still
+// sum to the exact billed total. That is what lets the hourly strip, the split chips and the model
+// rows all reconcile without the collector having to carry an (hour, speed, tier) bucket.
+const factorCache = {};
+function dayFactors(k) {
+  let f = factorCache[k];
+  if (f) return f;
+  f = factorCache[k] = {};
+  for (const [key, byModel] of Object.entries((DATA.days[k] || {}).sp || {})) {
+    const mult = spMult(key), known = spKnown(key);
+    for (const [m, arr] of Object.entries(byModel)) {
+      const c = mCost(m, { i: arr[0], o: arr[1], cw: arr[2], cr: arr[3], c1h: arr[4] || 0 });
+      const e = (f[m] ??= { base: 0, billed: 0, known: 0 });
+      e.base += c; e.billed += c * mult;
+      if (known) e.known += c;
+    }
+  }
+  return f;
+}
+// base is zero for a model that billed no tokens at all — <synthetic> does exactly that on real
+// data — and 0/0 has to come back as "unchanged", not NaN.
+const factorOf = (e) =>
+  priceMode !== "billed" || !e || !(e.base > 0) ? 1 : e.billed / e.base;
+function billedMult(k, m) { return factorOf(dayFactors(k)[m]); }
+
+// The one place spMult is applied directly rather than through billedMult: these rows ARE the
+// buckets, so routing them through the day scalar would square the premium.
 const spCost = (key, byModel) =>
-  Object.entries(byModel).reduce((t, [m, v]) => t + mCost(m, v), 0) * spMult(key);
+  Object.entries(byModel).reduce((t, [m, v]) => t + mCost(m, v), 0) *
+  (priceMode === "billed" ? spMult(key) : 1);
 const spTokens = (byModel) => Object.values(byModel).reduce((t, v) => t + mTok(v), 0);
 const spMsgs = (byModel) => Object.values(byModel).reduce((t, v) => t + v.msg, 0);
 // A value this build has never seen still has to render — and it comes from the transcript, so
@@ -2781,6 +2897,19 @@ const todayKey = () => {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 };
 
+// The as-billed figure carries traffic whose serving mode the transcript never recorded. That
+// share is priced at standard — the same treatment Priority Tier already gets rather than being
+// handed an invented multiplier — which makes the total a floor. A number with a silent assumption
+// inside it is the one thing this page exists not to print, so the assumption is stated wherever
+// the number is.
+function renderPriceMode(a) {
+  const host = document.getElementById("pmnote");
+  if (!host) return;
+  const pct = Math.round((1 - a.coverage) * 1000) / 10;
+  if (priceMode !== "billed" || pct < 0.05) { host.innerHTML = ""; return; }
+  host.innerHTML = '<div class="pmnote">' + icon("alert") + "<span>" + T("pmCoverage", pct) + "</span></div>";
+}
+
 // If a model isn't in the pricing table its cost is a mid-range guess. Saying so is the
 // difference between an estimate and a number that just looks authoritative.
 function renderPriceWarning() {
@@ -2821,6 +2950,12 @@ function render() {
 
   document.getElementById("costrange").textContent =
     range === "all" ? T("ofAll") : T("ofDays", range);
+  // applyStatic() resets this pair from data-i18n / data-tip-key, and it runs before render() both
+  // on boot and on every language switch — so the lens-dependent wording is written here, last,
+  // and wins in either order.
+  const labelEl = document.getElementById("costlabel");
+  labelEl.textContent = priceMode === "billed" ? T("costLabelBilled") : T("costLabel");
+  labelEl.dataset.tip = priceMode === "billed" ? T("costTipBilled") : T("costTip");
   const costEl = document.getElementById("costval");
   costEl.dataset.usd = a.cost;
   countUpUsd(costEl, a.cost);
@@ -2832,6 +2967,7 @@ function render() {
   lastShownCost = a.cost;
   // rates() fills the unpriced set as a side effect of the aggregate above — must come after it
   renderPriceWarning();
+  renderPriceMode(a);
   const peakLabel = peak === null ? "—" : T("hour", peak);
 
   const labels = T("cards"), tips = T("cardTips");
@@ -2966,7 +3102,7 @@ function renderToday() {
   const cost = dayCost(tk), toks = dayTokens(tk);
   const top = Object.entries(d.models).sort((a, b) => mTok(b[1]) - mTok(a[1]))[0];
   const busiest = d.hours.indexOf(Math.max(...d.hours));
-  const hrs = hourStats(d);
+  const hrs = hourStats(d, tk);
   const peakCost = Math.max(...hrs.map((x) => x.cost));
   const nowH = new Date().getHours();
   const activeHrs = hrs.filter((x) => x.cost > 0).length;
@@ -2976,10 +3112,11 @@ function renderToday() {
   for (const [m, v] of Object.entries(d.models)) {
     const [inp, out] = rates(m);
     const h1 = v.c1h || 0;
-    split.i += (v.i * inp) / 1e6;
-    split.o += (v.o * out) / 1e6;
-    split.cw += ((v.cw * 1.25 + h1 * 2) * inp) / 1e6;
-    split.cr += (v.cr * inp * 0.1) / 1e6;
+    const f = billedMult(tk, m);
+    split.i += (v.i * inp * f) / 1e6;
+    split.o += (v.o * out * f) / 1e6;
+    split.cw += ((v.cw * 1.25 + h1 * 2) * inp * f) / 1e6;
+    split.cr += (v.cr * inp * 0.1 * f) / 1e6;
     tsplit.i += v.i; tsplit.o += v.o; tsplit.cw += v.cw + h1; tsplit.cr += v.cr;
   }
   const splitChip = (key, label) =>
@@ -2994,15 +3131,17 @@ function renderToday() {
       ? T("tipHour", fmtUsdCents(x.cost), fmt(x.tok), x.msgs, x.top ? pretty(x.top) : "—")
       : T("tipHourIdle")) + '"></i>'
   ).join("");
+  // Today is one day, so the scalar is available directly rather than through a.costs.
+  const mc = (m, v) => mCost(m, v) * billedMult(tk, m);
   const mrows = Object.entries(d.models)
     .filter(([, v]) => mTok(v) > 0)
-    .sort((a, b) => mCost(b[0], b[1]) - mCost(a[0], a[1]));
-  const mMax = mrows.length ? mCost(mrows[0][0], mrows[0][1]) : 1;
+    .sort((a, b) => mc(b[0], b[1]) - mc(a[0], a[1]));
+  const mMax = mrows.length ? mc(mrows[0][0], mrows[0][1]) : 1;
   const modelRows = mrows.map(([m, v]) =>
     '<div class="tmrow" data-m="' + attr(m) + '"><span class="tmname">' + pretty(m) + "</span>" +
-    '<i class="tmbar"><i style="--p:' + (mMax ? (mCost(m, v) / mMax) * 100 : 0) + '%"></i></i>' +
+    '<i class="tmbar"><i style="--p:' + (mMax ? (mc(m, v) / mMax) * 100 : 0) + '%"></i></i>' +
     '<span class="tmtok">' + exb(mTok(v)) + "</span>" +
-    '<span class="tmcost">' + fmtUsdCents(mCost(m, v)) + "</span></div>"
+    '<span class="tmcost">' + fmtUsdCents(mc(m, v)) + "</span></div>"
   ).join("");
   const yk = shiftDay(tk, -1);
   const yCost = DATA.days[yk] ? dayCost(yk) : 0;
@@ -3066,7 +3205,7 @@ function compareHTML(tk) {
     const t = Object.entries(d.models).sort((p, q) => mTok(q[1]) - mTok(p[1]))[0];
     return {
       cost: dayCost(k), tok: dayTokens(k), msgs: d.msgs, sess: d.sessions.length,
-      hrs: hourStats(d).filter((x) => x.cost > 0).length, top: t ? pretty(t[0]) : "—",
+      hrs: hourStats(d, k).filter((x) => x.cost > 0).length, top: t ? pretty(t[0]) : "—",
     };
   };
   const A = stat(tk), B = stat(yk);
@@ -3118,7 +3257,7 @@ function avgHTML() {
     toks += dayTokens(k);
     msgs += d.msgs;
     sess += d.sessions.length;
-    activeHrs += hourStats(d).filter((x) => x.cost > 0).length;
+    activeHrs += hourStats(d, k).filter((x) => x.cost > 0).length;
   }
   const chip = (label, n, unit, tip) =>
     '<em data-exact="' + attr(Math.round(unit).toLocaleString() + " " + T("unitTokens")) +
@@ -3138,7 +3277,9 @@ function avgHTML() {
 }
 
 // Per-hour cost has to be summed model-by-model — see the hm comment in buildData.
-function hourStats(d) {
+// k is the day d came from — the billed multiplier is a per-(day, model) scalar, and the hm bucket
+// has no serving axis of its own to derive it from.
+function hourStats(d, k) {
   const out = [];
   for (let h = 0; h < 24; h++) {
     const bucket = (d.hm || {})[h] || {};
@@ -3146,7 +3287,7 @@ function hourStats(d) {
     for (const [m, a] of Object.entries(bucket)) {
       const v = { i: a[0], o: a[1], cw: a[2], cr: a[3], c1h: a[4] || 0 };
       const t = mTok(v);
-      cost += mCost(m, v);
+      cost += mCost(m, v) * billedMult(k, m);
       tok += t;
       if (t > topTok) { topTok = t; top = m; }
     }
@@ -3182,17 +3323,19 @@ function renderHeat(keys) {
 }
 
 const dayTokens = (k) => Object.values(DATA.days[k].models).reduce((s, m) => s + mTok(m), 0);
-const dayCost = (k) => Object.entries(DATA.days[k].models).reduce((s, [m, v]) => s + mCost(m, v), 0);
+const dayCost = (k) => Object.entries(DATA.days[k].models).reduce((s, [m, v]) => s + mCost(m, v) * billedMult(k, m), 0);
 const daysBetween = (k) => Math.round((new Date() - new Date(k + "T00:00:00")) / 864e5) + 1;
 
 // wallet spend card (Uiverse.io by Na3ar-17, adapted)
 let walletCollapsed = localStorage.getItem("ccstats-wallet-collapsed") === "1";
 let walletSel = 0;
 
+// Ordered by a.costs, not by mCost on the merged tokens: across a range the serving mix moves day
+// to day, so a model's billed cost is the sum of its billed days and nothing else.
 const topModels = (a) =>
   Object.entries(a.models)
     .filter(([, v]) => mTok(v) > 0)
-    .sort((x, y) => mCost(y[0], y[1]) - mCost(x[0], x[1]));
+    .sort((x, y) => (a.costs[y[0]] || 0) - (a.costs[x[0]] || 0));
 
 // share of this model's own total. Raw counts alone are unreadable across four orders of
 // magnitude (24.9K next to 109.2M), so each block carries its percentage and a fill bar.
@@ -3297,7 +3440,7 @@ function walletHTML(a) {
   const bank = top.map(([m, v], i) =>
     '<label class="bank-card" data-m="' + attr(m) + '"><div class="number">' +
     '<input type="radio" name="wallet-model" class="wradio" data-idx="' + i + '"' + (i === walletSel ? " checked" : "") + '><span class="custom-radio"></span>' +
-    '<p class="mname2">' + pretty(m) + '</p></div><p class="mcost2">' + fmtUsd(mCost(m, v)) + "</p></label>"
+    '<p class="mname2">' + pretty(m) + '</p></div><p class="mcost2">' + fmtUsd(a.costs[m] || 0) + "</p></label>"
   ).join("");
   return (
     '<div class="wcard">' +
@@ -3419,13 +3562,15 @@ function speedHTML(a) {
   // Everything on one standard bucket is the common case and looks like a bug ("why is there a
   // chart of one bar?"), so say what would make a second one appear.
   const plain = rows.every(([k]) => k === "standard|standard" || k === "unknown|unknown");
-  // Every other cost on the page is priced at standard rates, so once a premium or discount is
-  // in play these rows deliberately disagree with the model list above. Reconcile it out loud —
-  // two totals on one screen that don't add up read as a bug, not as a finding.
+  // These rows follow the header lens like everything else, so there is no longer a mismatch to
+  // apologise for. What is left is worth saying only in standard mode: the switch would move this
+  // range's total, and by how much. adj computes spMult directly rather than through spCost, which
+  // is mode-gated and would report no difference in the mode where it matters.
   const base = rows.reduce((t, [, v]) => t + Object.entries(v).reduce((s, [m, x]) => s + mCost(m, x), 0), 0);
-  const adj = rows.reduce((t, [k, v]) => t + spCost(k, v), 0);
-  const delta = Math.abs(adj - base) > 0.005
-    ? '<div class="sphint">' + T("spDelta", fmtUsd(base), fmtUsd(adj)) + "</div>" : "";
+  const adj = rows.reduce((t, [k, v]) =>
+    t + Object.entries(v).reduce((s, [m, x]) => s + mCost(m, x), 0) * spMult(k), 0);
+  const delta = priceMode !== "billed" && Math.abs(adj - base) > 0.005
+    ? '<div class="sphint">' + T("spInvite", fmtUsd(adj)) + "</div>" : "";
   return '<div class="sptitle"><span data-tip="' + attr(T("spTip")) + '">' + icon("gauge") +
     "<span>" + T("spTitle") + "</span></span></div>" +
     rows.map(([k, v], i) => {
@@ -3446,7 +3591,7 @@ function renderModels(a) {
   pane.innerHTML = walletHTML(a) + (rows.length
     ? rows.map(([m, v], i) =>
         '<div class="mrow" data-m="' + attr(m) + '" style="animation-delay:' + i * 60 + 'ms"><div class="mtop"><span class="mname">' + pretty(m) +
-        '</span><span class="mmeta"><span data-exact="' + fmtUsdCents(mCost(m, v)) + '">' + fmtUsd(mCost(m, v)) + "</span> · " +
+        '</span><span class="mmeta"><span data-exact="' + fmtUsdCents(a.costs[m] || 0) + '">' + fmtUsd(a.costs[m] || 0) + "</span> · " +
         exb(mTok(v)) + " " + T("unitTokens") + " · " + v.msg.toLocaleString() + " " + T("unitMsgs") +
         '</span></div><div class="bar"><i style="width:' + Math.max(2, (mTok(v) / max) * 100) + '%"></i></div></div>'
       ).join("") + speedHTML(a)
@@ -3848,6 +3993,10 @@ function applyStatic() {
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = T(el.dataset.i18n); });
   document.querySelectorAll("[data-tip-key]").forEach((el) => { el.dataset.tip = T(el.dataset.tipKey); });
   document.querySelectorAll("[data-range]").forEach((b) => { b.dataset.tip = T("tipRange", b.dataset.range); });
+  document.querySelectorAll("[data-pm]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.pm === priceMode);
+    b.dataset.tip = T(b.dataset.pm === "billed" ? "pmTipBilled" : "pmTipStandard");
+  });
   if (fsBtn && !fsBtn.hidden) paintFs(); // aria-label and tooltip follow the language
   document.querySelectorAll("[data-lang]").forEach((b) => b.classList.toggle("on", b.dataset.lang === lang));
   if (document.body.classList.contains("party")) document.title = T("partyTitle");
@@ -3948,6 +4097,18 @@ document.querySelectorAll("[data-range]").forEach((b) =>
   })
 );
 
+// Bound per element at end of script exactly like the range pills — the markup-declared pair is in
+// the document by now, so no delegation is needed.
+document.querySelectorAll("[data-pm]").forEach((b) =>
+  b.addEventListener("click", () => {
+    if (b.dataset.pm === priceMode) return;
+    priceMode = b.dataset.pm;
+    localStorage.setItem("ccstats-price-mode", priceMode);
+    document.querySelectorAll("[data-pm]").forEach((x) => x.classList.toggle("on", x === b));
+    render();
+  })
+);
+
 // --- right-click context menu (Uiverse.io by Na3ar-17, adapted) ---
 const ctx = document.createElement("div");
 ctx.className = "ctx";
@@ -4005,7 +4166,7 @@ function copyContext(el) {
   const hourEl = at(".thbar");
   if (hourEl) {
     const tk = todayKey(), d = DATA.days[tk];
-    const h = +hourEl.dataset.h, x = hourStats(d || { hours: [], hm: {} })[h];
+    const h = +hourEl.dataset.h, x = hourStats(d || { hours: [], hm: {} }, tk)[h];
     const label = T("hour", h);
     if (!x.tok && !x.msgs) return { label, text: T("copyHourEmpty", label, dayLabel(tk)) };
     return { label, text: T("copyHour", label, dayLabel(tk), fmtUsdCents(x.cost), fmt(x.tok),
@@ -4020,12 +4181,18 @@ function copyContext(el) {
     const m = modelEl.dataset.m;
     const scopeKeys = todayModel ? [todayKey()] : keysInRange();
     const v = { i: 0, o: 0, cw: 0, cr: 0, c1h: 0, msg: 0 };
+    // Tokens merge across days, cost does not — the serving mix moves, so the billed cost is
+    // accumulated day by day here for the same reason aggregate() keeps a per-model costs map.
+    let mcost = 0;
     for (const k of scopeKeys) {
       const e2 = DATA.days[k] && DATA.days[k].models[m];
-      if (e2) { v.i += e2.i; v.o += e2.o; v.cw += e2.cw; v.cr += e2.cr; v.c1h += e2.c1h || 0; v.msg += e2.msg || 0; }
+      if (e2) {
+        v.i += e2.i; v.o += e2.o; v.cw += e2.cw; v.cr += e2.cr; v.c1h += e2.c1h || 0; v.msg += e2.msg || 0;
+        mcost += mCost(m, e2) * billedMult(k, m);
+      }
     }
     const scope = todayModel ? T("copyScopeToday") : T("copyLabel", range);
-    return { label: pretty(m), text: T("copyModel", pretty(m), scope, fmtUsdCents(mCost(m, v)),
+    return { label: pretty(m), text: T("copyModel", pretty(m), scope, fmtUsdCents(mcost),
       // v.cw is 5-minute writes only; the 1-hour tier is a separate field. Reporting the bare
       // v.cw here left the four components short of the total they sit next to — on real data
       // that was 16.5M tokens of 1h cache writes silently dropped out of the copied text.
@@ -4070,10 +4237,19 @@ function copyContext(el) {
     a.msgs.toLocaleString(), a.sessions, a.activeDays, st.cur, st.max, fav ? pretty(fav[0]) : "") };
 }
 
+// Every copied figure follows the active lens, so the copied text has to name it — a pasted
+// "$2,999" that silently means something different from the one in the next message is worse than
+// no number at all. One appended clause rather than a sixth argument on five copy functions, three
+// of which already take different arities in different locales.
+function withMode(c) {
+  if (priceMode !== "billed" || !c || !c.text) return c;
+  return { label: c.label, text: c.text + " · " + T("pmCopyNote") };
+}
+
 let ctxCopy = null;
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
-  ctxCopy = copyContext(e.target);
+  ctxCopy = withMode(copyContext(e.target));
   // applyStatic() resets this row from data-i18n on every language change, so the label is
   // re-derived from the live state each time the menu opens rather than only on toggle
   const rl = ctx.querySelector('[data-act="redact"]');
@@ -4108,7 +4284,7 @@ ctx.addEventListener("click", (e) => {
   const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
   switch (el.dataset.act) {
     case "copy": {
-      const c = ctxCopy || copyContext(null);
+      const c = ctxCopy || withMode(copyContext(null));
       navigator.clipboard.writeText(c.text)
         .then(() => {
           confetti(cx, cy, { n: 10 });
@@ -4164,6 +4340,8 @@ async function pollLive() {
     if (sig !== liveSig) {
       liveSig = sig;
       DATA.days = fresh.days;
+      // the cached scalars are keyed by day and derived from DATA.days, which just changed
+      for (const k of Object.keys(factorCache)) delete factorCache[k];
       dayKeys.length = 0;
       dayKeys.push(...Object.keys(DATA.days).sort());
       // first usage arriving while the empty-state shell is up: the dashboard markup is gone,

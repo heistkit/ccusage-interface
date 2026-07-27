@@ -201,6 +201,7 @@ check("feedback opens the repo's issue form, not a form post",
 check("install command does not point at the unpublished npm name",
   page.includes("npx github:" + slug) && !new RegExp("npx\\s+" + pkg.name + "\\b").test(page));
 check("dashboard carries the feedback action", shell.includes('data-act="feedback"'));
+check("dashboard carries the pricing lens", shell.includes('data-pm="billed"'));
 check("dashboard reads its payload from the session store",
   dashboard.includes(JSON.stringify(STORE_KEY)) && !dashboard.includes("__DATA__"));
 check("landing page and dashboard agree on the store key", page.includes(JSON.stringify(STORE_KEY)));
