@@ -11,6 +11,21 @@
 <meta name="referrer" content="no-referrer">
 <meta name="description" content="A usage dashboard for Claude Code. Drop in your transcripts and read them in the browser — the parsing happens on your machine, nothing is uploaded.">
 <title>ccstats — Claude Code usage, read in your browser</title>
+<!-- Link-preview tags. These are inert markup: the page never loads anything for them, crawlers
+     read them from their own servers, so img-src does not apply and the policy above is untouched.
+     og:url is omitted rather than guessed — crawlers fall back to the request URL, which is right
+     for a site with no configured domain, and a <link rel="canonical"> would have been a remote
+     reference that the build's own no-network check rejects.
+     There is deliberately no og:image yet: the only screenshot in this repo carries real usage
+     numbers, and an og:image republishes whatever it points at into every link preview on every
+     platform. A card built from demo.html's fabricated data is the version that can ship. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ccstats">
+<meta property="og:title" content="ccstats — Claude Code usage, read in your browser">
+<meta property="og:description" content="Drop in your Claude Code transcripts and read them in the browser. The parsing happens on your machine — nothing is uploaded, and there is no server to upload to.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="ccstats — Claude Code usage, read in your browser">
+<meta name="twitter:description" content="Drop in your Claude Code transcripts and read them in the browser. The parsing happens on your machine — nothing is uploaded, and there is no server to upload to.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%232da44e'/%3E%3Cg stroke='%23f2f5f3' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M7 16V11'/%3E%3Cpath d='M12 16V7'/%3E%3Cpath d='M17 16v-3'/%3E%3C/g%3E%3C/svg%3E">
 <style>__FONTS__</style>
 <style>
@@ -321,6 +336,19 @@ async function walk(entry, into) {
 }
 
 // --- the actual work ------------------------------------------------------------------------
+// 2 MB of transcript per slice. Measured on a 90 MB file: 45 slices, worst slice 19 ms, and the
+// total parse time is the same as handing the whole string over at once — slicing is free.
+const SLICE = 2 * 1024 * 1024;
+
+// scheduler.yield() resumes after paint without the nested-setTimeout clamp; ~120 chained
+// setTimeout(0) calls pay 4 ms each once the nesting depth passes five. requestAnimationFrame was
+// rejected because it stops firing in a background tab, which would stall the parse the moment you
+// switch away, and MessageChannel because it can run before the frame is painted at all.
+const yieldToPaint = () =>
+  typeof scheduler === "object" && scheduler && typeof scheduler.yield === "function"
+    ? scheduler.yield()
+    : new Promise((r) => setTimeout(r, 0));
+
 async function process(files) {
   if (busy) return;
   busy = true;
@@ -347,14 +375,27 @@ async function process(files) {
     try { text = await f.text(); } catch { collector.skipFile(); done++; continue; }
     // f.name only, never webkitRelativePath: the id is fed to shortHash for a dedup key, and a
     // relative path would put folder names — which are project names — into that hash's input.
-    collector.addFile(f.name, text);
-    done++; bytes += f.size;
-    // yield to the compositor every so often, otherwise the bar never paints on a big folder
-    if (done % 25 === 0 || done === jsonl.length) {
-      progress(done / jsonl.length);
+    collector.startFile();
+    // One transcript here can be 90 MB, which is a single unbroken third of a second inside
+    // JSON.parse — yielding between files cannot break that up, so the file is fed in slices.
+    // Each slice must start on a line boundary because nothing is buffered across calls.
+    for (let at = 0; at < text.length;) {
+      let end = Math.min(text.length, at + SLICE);
+      if (end < text.length) {
+        const nl = text.indexOf("\n", end);
+        end = nl === -1 ? text.length : nl + 1;
+      }
+      collector.addPart(f.name, text.slice(at, end));
+      bytes += end - at;
+      at = end;
+      // Progress is driven by bytes, not by file count: these files span four orders of magnitude
+      // (4 KB to 90 MB here), so a count-driven bar races through three hundred small ones and
+      // then sits dead through the big one.
+      progress(bytes / totalBytes);
       $("statusMeta").textContent = nf(done) + " of " + nf(jsonl.length) + " files · " + mb(bytes);
-      await new Promise((r) => setTimeout(r));
+      await yieldToPaint();
     }
+    done++;
   }
 
   const data = collector.result({

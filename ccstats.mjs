@@ -168,17 +168,13 @@ const SESSION_CAP = 200;
 // counted once under each, and either axis is still readable by splitting on the bar.
 const getDay = (k) => (days[k] ??= { models: {}, msgs: 0, sessions: new Set(), hours: new Array(24).fill(0), hm: {}, sp: {} });
 
-return {
-
-// A file that existed but could not be read still happened, and the caller already committed to
-// scanning it — counting it here keeps "scanned N transcript files" honest.
-skipFile() { files++; },
-
+// The per-line parse, lifted out of addFile so one transcript can be handed over in line-aligned
+// slices without the file counter moving. A 90 MB transcript is a single 300 ms block of
+// JSON.parse, and no amount of yielding *between* files can break that up.
 // `id` stands in for the file path, and is only ever fed to shortHash (see the uuid fallback
 // below), so no path can reach the output. The browser build passes a bare filename for the
 // same reason: there is nothing useful to leak even if it did.
-addFile(id, text) {
-  files++;
+const addText = (id, text) => {
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     lines++;
@@ -283,7 +279,24 @@ addFile(id, text) {
       }
     }
   }
+};
+
+return {
+
+// A file that existed but could not be read still happened, and the caller already committed to
+// scanning it — counting it here keeps "scanned N transcript files" honest.
+skipFile() { files++; },
+
+addFile(id, text) {
+  files++;
+  addText(id, text);
 },
+
+// The same file, delivered in pieces, for a caller that cannot afford one long parse. startFile()
+// counts it once; every slice has to begin at the start of a line, which is the caller's job —
+// nothing is buffered between calls here, deliberately, because the CLI never needs it.
+startFile() { files++; },
+addPart(id, text) { addText(id, text); },
 
 // `meta` carries the two things only the caller can know: how many roots it walked, and which
 // config was in force. The browser has neither a filesystem nor a config file, so it passes its

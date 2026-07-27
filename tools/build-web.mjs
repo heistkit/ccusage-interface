@@ -179,6 +179,37 @@ try {
 check("lifted collector compiles and runs with no module scope", true);
 check("lifted collector agrees with the CLI byte for byte",
   JSON.stringify(liftedOut) === JSON.stringify(nativeOut));
+
+// The landing page does not hand a transcript over in one piece — a single real file can be 90 MB,
+// which is one unbroken third of a second inside JSON.parse, and the frame budget is 16 ms. It
+// slices at line boundaries and feeds the pieces through startFile/addPart. That is only safe if
+// the sliced result is indistinguishable from the whole-file one, so prove it here rather than
+// trusting it: once at the page's real budget, and once at a byte size small enough to force a
+// slice per line, which is what exercises the boundary scan.
+const sliced = (factory, budget) => {
+  const c = factory({ hashSessions: true });
+  c.startFile();
+  for (let at = 0; at < SAMPLE.length;) {
+    let end = Math.min(SAMPLE.length, at + budget);
+    if (end < SAMPLE.length) {
+      const nl = SAMPLE.indexOf("\n", end);
+      end = nl === -1 ? SAMPLE.length : nl + 1;
+    }
+    c.addPart("session.jsonl", SAMPLE.slice(at, end));
+    at = end;
+  }
+  c.skipFile();
+  const r = c.result({ roots: 1, config: null });
+  delete r.generatedAt;
+  return r;
+};
+const whole = JSON.stringify(nativeOut);
+check("a sliced file parses identically to a whole one",
+  JSON.stringify(sliced(createCollector, 2 * 1024 * 1024)) === whole);
+check("slicing survives a boundary on every line",
+  JSON.stringify(sliced(createCollector, 1)) === whole);
+check("the lifted collector can be sliced too",
+  JSON.stringify(sliced(lifted, 64)) === whole);
 check("sample actually exercised the parser",
   Object.keys(nativeOut.days).length === 3 && nativeOut.badLines === 1 && nativeOut.files === 2,
   Object.keys(nativeOut.days).length + " days, " + nativeOut.badLines + " bad, " + nativeOut.files + " files");
