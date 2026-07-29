@@ -77,11 +77,7 @@ scoop install https://github.com/heistkit/ccusage-interface/releases/latest/down
 **Homebrew** — every release ships a `ccstats.rb` formula with that release's checksum. Drop it
 into a tap repo as `Formula/ccstats.rb` and `brew install <yourtap>/ccstats`.
 
-**npm** — once the package is published:
-
-```bash
-npm install -g ccusage-interface   # then: ccstats --serve --open
-```
+**npm** — not published. Use `npx` above; it needs nothing installed either.
 
 **From source**
 
